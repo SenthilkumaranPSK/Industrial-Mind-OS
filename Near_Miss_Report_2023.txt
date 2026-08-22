@@ -1,0 +1,18 @@
+# INCIDENT REPORT & NEAR-MISS RECORD (2023-11-04)
+
+## 1. Incident Overview
+- **Date of Incident**: November 4, 2023
+- **Equipment Tag**: Pump-A12
+- **Location**: Primary Cooling Loop, Sector 4
+- **Classification**: Near-Miss / Environmental Hazard
+
+## 2. Event Description
+During routine operations, Pump A12 experienced a catastrophic mechanical seal failure. This resulted in a minor leak of coolant fluid onto the factory floor. The spill was contained within 15 minutes by the emergency response team, preventing it from reaching the environmental drainage system. There were no injuries.
+
+## 3. Root Cause Analysis (Historical)
+Post-incident analysis revealed that the pump had been operating with a severe vibration level of 5.8 mm/s for 48 hours prior to the failure. Operations personnel ignored the vibration alerts because they mistakenly believed the threshold was 6.5 mm/s. The sustained vibration at 5.8 mm/s shattered the inboard ceramic seals. 
+
+## 4. Corrective Action / Lessons Learned
+- **Strict Adherence to Limits**: The maximum allowable vibration for Pump A12 is strictly 5.0 mm/s as per the OEM manual.
+- **Mandatory Shutdown Protocol**: Any vibration reading exceeding 5.5 mm/s requires an immediate, mandatory shutdown of the pump to prevent seal fracture.
+- **Training**: All technicians must be re-trained on the specific tolerance limits of the A-series pumps. Do NOT rely on generic plant guidelines for high-pressure equipment.
