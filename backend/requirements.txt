@@ -18,7 +18,6 @@ python-dotenv>=1.0.1
 networkx>=3.0
 playwright>=1.40.0
 firecrawl-py>=0.0.20
-supabase>=2.3.0
 pydantic[email]>=2.6.0
 beautifulsoup4>=4.12.0
 python-docx>=1.1.0

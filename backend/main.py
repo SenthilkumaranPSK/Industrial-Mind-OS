@@ -10,9 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.router import api_router
 from api.auth import router as auth_router
 from db.database import engine, Base
+from db import models  # noqa: F401 - registers models on Base before create_all
 
-# Supabase handles DB tables and persistence
-# Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

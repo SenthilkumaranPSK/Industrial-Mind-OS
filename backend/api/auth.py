@@ -1,84 +1,75 @@
-from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
-from db.supabase_client import supabase
+from jose import JWTError
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+
+from db.database import get_db
+from db.models import User
+from core.security import verify_password, get_password_hash, create_access_token, decode_access_token
 from . import auth_schemas
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     """
-    Validate the Supabase JWT and return the user.
+    Validate the JWT and return the user.
     """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
-        # Supabase client handles the JWT validation via get_user
-        response = supabase.auth.get_user(token)
-        if not response.user:
-            raise HTTPException(status_code=401, detail="Invalid session")
-        
-        # We can extract metadata like username from user_metadata
-        user_data = response.user
-        return {
-            "id": user_data.id,
-            "email": user_data.email,
-            "username": user_data.user_metadata.get("username", user_data.email.split("@")[0])
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Could not validate credentials: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        raise credentials_exception
+
+    return {"id": str(user.id), "email": user.email, "username": user.username}
 
 @router.post("/register", response_model=auth_schemas.UserResponse)
-def register_user(user: auth_schemas.UserCreate):
-    try:
-        # Sign up with Supabase
-        # We store the username in user_metadata
-        response = supabase.auth.sign_up({
-            "email": user.email,
-            "password": user.password,
-            "options": {
-                "data": {"username": user.username}
-            }
-        })
-        
-        if not response.user:
-            raise HTTPException(status_code=400, detail="Registration failed")
-            
-        return {
-            "id": response.user.id,
-            "email": response.user.email,
-            "username": user.username
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(
+        or_(User.email == user.email, User.username == user.username)
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email or username already registered")
+
+    db_user = User(
+        username=user.username,
+        email=user.email,
+        hashed_password=get_password_hash(user.password),
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+
+    return {
+        "id": str(db_user.id),
+        "email": db_user.email,
+        "username": db_user.username,
+    }
 
 @router.post("/login", response_model=auth_schemas.Token)
-def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    try:
-        # Sign in with Supabase
-        response = supabase.auth.sign_in_with_password({
-            "email": form_data.username, # Supabase usually takes email for login
-            "password": form_data.password
-        })
-        
-        if not response.session:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-            
-        return {
-            "access_token": response.session.access_token,
-            "token_type": "bearer"
-        }
-    except Exception as e:
-        # If user tried to login with username, we might need a lookup, 
-        # but Supabase Auth natively prefers Email.
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Login failed: {str(e)}",
+            detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/me")
 def read_users_me(current_user: dict = Depends(get_current_user)):

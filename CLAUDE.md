@@ -36,7 +36,7 @@ No `lint` or `test` script is defined in `package.json`.
 
 Required:
 - `GROQ_API_KEY` — powers every LLM call (synthesis, planning/query-rephrasing, web-query refinement, image OCR, the immune-system auditor). Nothing in the agent pipeline works without it.
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY` — required at import time; `db/supabase_client.py` raises on missing values. `SUPABASE_SERVICE_ROLE_KEY` is optional and preferred for backend admin calls when present.
+- `JWT_SECRET_KEY` — signs/verifies local auth JWTs (`core/security.py`). Falls back to a hardcoded dev default if unset — always set a real value outside local dev. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`.
 
 Optional (feature-gated, code degrades gracefully if absent):
 - `TAVILY_API_KEY` — primary web search provider for Online/Hybrid mode.
@@ -51,12 +51,12 @@ Frontend: `VITE_API_URL` (defaults to `http://localhost:8000` when unset — not
 - **Vector DB**: `backend/storage/vector_db.py` — Qdrant client in **local disk-persisted mode** (`QdrantClient(path=...)`), storing to `backend/qdrant_data/`. Not a Qdrant server.
 - **Graph DB**: `backend/storage/graph_db.py` — a NetworkX `MultiDiGraph` (not Neo4j, despite `neo4j` being in requirements.txt) serialized to `backend/graph_db.json` on every write.
 - **Memory cache**: `backend/storage/memory_cache.py` — a plain dict serialized to `backend/memory_cache.json`. Small documents (<15,000 chars) are stored here directly and bypass vector embedding entirely ("direct injection").
-- **SQL/Supabase**: `backend/db/database.py` defines a SQLAlchemy/SQLite engine (`industrial_mind_os.db`) but it is unused — `main.py` explicitly comments out `Base.metadata.create_all`. All auth and user persistence goes through Supabase (`db/supabase_client.py`), not this SQLAlchemy layer.
+- **Auth/users**: `backend/db/database.py` (SQLAlchemy engine, `industrial_mind_os.db`) + `db/models.py` (`User` table) is the auth store — local JWT auth, not Supabase. `main.py` calls `Base.metadata.create_all` on startup to create tables. Passwords are hashed with passlib/bcrypt and tokens signed with `python-jose` in `core/security.py`; `api/auth.py::get_current_user` decodes the bearer token and loads the `User` row per-request.
 
 Because these stores are files/embedded processes, deleting a document must clean up three places in lockstep: `vector_db.delete_by_filename`, `memory_cache.delete_file`, `graph_db.delete_by_filename` (all wired together in `api/router.py`'s `DELETE /documents/{filename}`).
 
 ### Request flow
-`main.py` mounts two routers under `/api/v1`: `api/auth.py` (`/auth/*`, Supabase-backed login/register/JWT validation via `get_current_user`) and `api/router.py` (everything else: upload, query, documents, alerts, graph, confluence sync).
+`main.py` mounts two routers under `/api/v1`: `api/auth.py` (`/auth/*` — register/login/`get_current_user`, backed by the local SQLite `User` table and JWTs, see Auth/users above) and `api/router.py` (everything else: upload, query, documents, alerts, graph, confluence sync).
 
 ### Ingestion (`POST /api/v1/upload` in `api/router.py`)
 Per-extension text extraction happens inline in the route handler (not a shared parser abstraction):
@@ -100,6 +100,6 @@ Runs as a `BackgroundTasks` job triggered only on the direct-injection (small-fi
 ### Frontend structure
 Single-page app — despite `react-router-dom` being a dependency and a `src/pages/` directory existing (`Home.jsx`, `Query.jsx`, `Upload.jsx`), no `<Router>`/`<Routes>` is actually wired up in `App.jsx`/`main.jsx`. All state (auth token, chats, messages, uploaded files, alerts, active artifact) lives in `App.jsx` via `useState` and is passed down as props; per-chat history is persisted to `localStorage` keyed by user email. Treat `src/pages/*` as effectively unused legacy code unless you're the one wiring up routing.
 
-Auth token (`imos_token`) is stored in `localStorage` and sent as a Bearer token on every API call; the backend validates it against Supabase per-request (`api/auth.py::get_current_user`) rather than decoding it locally.
+Auth token (`imos_token`) is stored in `localStorage` and sent as a Bearer token on every API call; the backend validates it locally by decoding the JWT and loading the user from SQLite (`api/auth.py::get_current_user`) — no external auth provider involved.
 
 Key components: `ChatInterface.jsx`/`ChatMessage.jsx` (chat + `[ARTIFACT]` block rendering), `InsightPanel.jsx` (confidence/strategy/citations sidebar), `GraphVisualizer.jsx`/`MindMap.jsx` (`react-force-graph-2d` rendering of `GET /api/v1/graph/data`, server-capped at top 300 nodes by degree), `SourceSelectionModal.jsx` (per-chat document gating UI), `Sidebar.jsx` (file list + alerts bell).

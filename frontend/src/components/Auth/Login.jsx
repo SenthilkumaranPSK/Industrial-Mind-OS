@@ -282,7 +282,7 @@ export default function Login({ onLogin, onNavigateRegister }) {
           <div style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#94a3b8' }}>
               <Shield style={{ width: 14, height: 14 }} />
-              <span style={{ fontSize: 12 }}>Supabase Auth</span>
+              <span style={{ fontSize: 12 }}>Secure Auth</span>
             </div>
             <div style={{ width: 1, height: 12, background: '#e2e8f0' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#94a3b8' }}>
