@@ -3,7 +3,7 @@ import logging
 from typing import TypedDict, List
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_groq import ChatGroq
+from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from storage.vector_db import vector_db
 from storage.graph_db import graph_db
@@ -12,6 +12,11 @@ from core.embeddings import LocalEmbedder
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# The "brain" model for synthesis/reasoning-heavy calls; a faster/cheaper model for
+# quick query-rephrasing calls where deep reasoning isn't needed.
+SYNTHESIS_MODEL = "claude-sonnet-5"
+FAST_MODEL = "claude-haiku-4-5-20251001"
 
 # 1. Defined State for All Agents
 class AgentState(TypedDict):
@@ -32,20 +37,19 @@ class AgentState(TypedDict):
     files: List[str]  # Restricted knowledge scope for this chat
 
 def run_llm(system_prompt: str, user_prompt: str) -> str:
-    """Helper to query the Groq Cloud AI (Llama 3 70B) for 10x speed"""
+    """Helper to query Claude (the main reasoning brain) for synthesis"""
     try:
-        api_key = os.getenv("GROQ_API_KEY")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            return "Error: GROQ_API_KEY not found in .env file."
-            
-        # Use the latest versatile 70B model
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0, groq_api_key=api_key) 
+            return "Error: ANTHROPIC_API_KEY not found in .env file."
+
+        llm = ChatAnthropic(model=SYNTHESIS_MODEL, temperature=0.0, anthropic_api_key=api_key)
         prompt = ChatPromptTemplate.from_messages([("system", "{sys}"), ("human", "{usr}")])
         chain = prompt | llm
         return chain.invoke({"sys": system_prompt, "usr": user_prompt}).content
     except Exception as e:
-        logger.error(f"Groq API Call Failed: {e}")
-        return f"Error connecting to Groq Intelligence: {e}"
+        logger.error(f"Claude API Call Failed: {e}")
+        return f"Error connecting to Claude Intelligence: {e}"
 
 # ----------------- AGENT 1: PLANNING AGENT -----------------
 def planning_node(state: AgentState):
@@ -56,12 +60,12 @@ def planning_node(state: AgentState):
     state["original_query"] = state["query"]
     state["retry_count"] = state.get("retry_count", 0)
     
-    # We let Groq rephrase or simplify the query if needed
+    # We let the fast model rephrase or simplify the query if needed
     if " and " in state["query"].lower() or "compare" in state["query"].lower():
         system = "You are the Planning Agent. Rephrase the user query into clear search engine keywords. Output ONLY the rephrased query."
         # Use a faster, smaller model for planning
-        api_key = os.getenv("GROQ_API_KEY")
-        llm_fast = ChatGroq(model="llama-3.1-8b-instant", temperature=0.0, groq_api_key=api_key)
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        llm_fast = ChatAnthropic(model=FAST_MODEL, temperature=0.0, anthropic_api_key=api_key)
         prompt = ChatPromptTemplate.from_messages([("system", system), ("human", f"Fix this: {state['query']}")])
         rephrased_content = (prompt | llm_fast).invoke({}).content
         
@@ -146,11 +150,11 @@ def web_search_node(state: AgentState):
     
     search_query = state["query"]
     # 0. Quick Keyword Refinement
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if api_key:
         try:
             refine_sys = "You are a Search Expert. Convert the user query into 3-5 high-intent search keywords. Output ONLY keywords."
-            llm_fast = ChatGroq(model="llama-3.1-8b-instant", temperature=0.0, groq_api_key=api_key)
+            llm_fast = ChatAnthropic(model=FAST_MODEL, temperature=0.0, anthropic_api_key=api_key)
             search_query = llm_fast.invoke([("system", refine_sys), ("human", state["query"])]).content
             logger.info(f"Refined Web Query: {search_query}")
         except Exception:

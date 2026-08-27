@@ -131,33 +131,32 @@ async def upload_document(
         elif ext in ["png", "jpg", "jpeg"]:
             try:
                 import base64
-                from langchain_groq import ChatGroq
+                from langchain_anthropic import ChatAnthropic
                 from langchain_core.messages import HumanMessage
                 import os
-                
-                api_key = os.getenv("GROQ_API_KEY")
+
+                api_key = os.getenv("ANTHROPIC_API_KEY")
                 if not api_key:
-                    raise Exception("GROQ_API_KEY missing for Vision OCR.")
-                
+                    raise Exception("ANTHROPIC_API_KEY missing for Vision OCR.")
+
                 base64_image = base64.b64encode(content).decode('utf-8')
                 mime_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
-                
-                # Using Groq's fast, free multimodal model
-                llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0.0, groq_api_key=api_key)
-                
+
+                llm = ChatAnthropic(model="claude-sonnet-5", temperature=0.0, anthropic_api_key=api_key)
+
                 prompt = (
                     "You are an elite Industrial OCR System. "
                     "Extract all text, labels, measurements, component names, and structural data from this engineering diagram or scanned form. "
                     "Format the output as a clear, highly structured markdown document. Do not miss any numbers or technical specifications."
                 )
-                
+
                 msg = llm.invoke([
                     HumanMessage(content=[
                         {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+                        {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": base64_image}}
                     ])
                 ])
-                
+
                 text_content = f"--- Vision OCR Extraction for {filename} ---\n\n" + msg.content
                 logger.info(f"Vision OCR completed successfully for '{filename}'")
             except Exception as e:

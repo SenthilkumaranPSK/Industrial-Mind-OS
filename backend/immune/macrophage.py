@@ -46,13 +46,13 @@ class ImmunitySystem:
         try:
             import os
             import time
-            api_key = os.getenv("GROQ_API_KEY")
+            api_key = os.getenv("ANTHROPIC_API_KEY")
             if not api_key:
-                logger.error("Macrophage: GROQ_API_KEY missing.")
+                logger.error("Macrophage: ANTHROPIC_API_KEY missing.")
                 return {"status": "error"}
 
-            from langchain_groq import ChatGroq
-            llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0, groq_api_key=api_key)
+            from langchain_anthropic import ChatAnthropic
+            llm = ChatAnthropic(model="claude-sonnet-5", temperature=0.0, anthropic_api_key=api_key)
             prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", user_prompt)])
             
             chain = prompt | llm

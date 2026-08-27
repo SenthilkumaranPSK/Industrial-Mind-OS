@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from db.database import get_db
 from db.models import User
@@ -35,16 +34,23 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
     return {"id": str(user.id), "email": user.email, "username": user.username}
 
+def _derive_username(email: str, db: Session) -> str:
+    """Derive a unique username from the local part of an email address."""
+    base = email.split("@")[0]
+    username = base
+    suffix = 1
+    while db.query(User).filter(User.username == username).first():
+        suffix += 1
+        username = f"{base}{suffix}"
+    return username
+
 @router.post("/register", response_model=auth_schemas.UserResponse)
 def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(
-        or_(User.email == user.email, User.username == user.username)
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email or username already registered")
+    if db.query(User).filter(User.email == user.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     db_user = User(
-        username=user.username,
+        username=_derive_username(user.email, db),
         email=user.email,
         hashed_password=get_password_hash(user.password),
     )
