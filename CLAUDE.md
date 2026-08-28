@@ -23,6 +23,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 Requires a `.env` in `backend/` (copy `backend/.env.example` — see Environment variables below).
 
+Use a CPython 3.11 interpreter for `venv` — pinned deps like `bcrypt==3.2.2` don't have wheels for newer interpreters (e.g. an MSYS2/mingw64 `python` resolving to 3.14 if it's first on `PATH`), which silently produces a broken venv: pip reports success, but `import bcrypt`/`passlib` then fails because the resolver quietly dropped them. In Git Bash on Windows, `py -3.11 -m venv venv` can still pick up the wrong interpreter (the `-3.11` selector doesn't reliably reach the `py` launcher through Git Bash) — check with `venv/Scripts/python.exe --version`, and if it's wrong, delete `venv/` and recreate it by invoking the 3.11 `python.exe` directly by its full path instead of via `py`.
+
 ### Frontend (from `frontend/`)
 ```bash
 npm install
@@ -35,7 +37,7 @@ No `lint` or `test` script is defined in `package.json`.
 ## Environment variables (backend)
 
 Required:
-- `ANTHROPIC_API_KEY` — powers every LLM call (synthesis, planning/query-rephrasing, web-query refinement, image OCR, the immune-system auditor) via `langchain-anthropic`. Nothing in the agent pipeline works without it.
+- `GOOGLE_API_KEY` — powers every LLM call (synthesis, planning/query-rephrasing, web-query refinement, image OCR, the immune-system auditor) via `langchain-google-genai` (Gemini). Nothing in the agent pipeline works without it.
 - `JWT_SECRET_KEY` — signs/verifies local auth JWTs (`core/security.py`). Falls back to a hardcoded dev default if unset — always set a real value outside local dev. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`.
 
 Optional (feature-gated, code degrades gracefully if absent):
@@ -64,7 +66,7 @@ Per-extension text extraction happens inline in the route handler (not a shared 
 - `pptx` → `python-pptx`, shape text per slide
 - `pdf` → `pypdf`, then `clean_spaced_text()` repairs the "s p a c e d   o u t" character-spacing artifact common in PDF extraction
 - `docx` → `python-docx`, falls back to raw UTF-8 decode on failure
-- `png`/`jpg`/`jpeg` → sent to `claude-sonnet-5` (vision) for OCR/structured extraction (requires `ANTHROPIC_API_KEY`)
+- `png`/`jpg`/`jpeg` → sent to `gemini-2.5-pro` (vision) for OCR/structured extraction (requires `GOOGLE_API_KEY`)
 - everything else → raw UTF-8 decode
 
 Then: **<15,000 chars** → stored directly in `memory_cache` + graph keyword edges built (bypasses embedding/Qdrant), and the immune system's `scan_for_conflicts` runs as a background task. **>=15,000 chars** → chunked via `storage/ingestion.py`'s semantic splitter (splits on sentence boundaries, breaks a chunk when cosine similarity between consecutive sentence embeddings drops below 0.70, using the local HF embedder), embedded, upserted to Qdrant, and graph-populated — all in a `BackgroundTasks` job.
@@ -80,11 +82,11 @@ planner → adaptive_retrieval → web_search → memory_builder → synthesizer
                                                                               ↓
                                                                            planner (loop)
 ```
-- **planner**: rephrases multi-part/comparison queries into cleaner search keywords using the fast/cheap `claude-haiku-4-5-20251001` model (`FAST_MODEL` in `orchestrator.py`).
+- **planner**: rephrases multi-part/comparison queries into cleaner search keywords using the fast/cheap `gemini-2.5-flash` model (`FAST_MODEL` in `orchestrator.py`).
 - **adaptive_retrieval**: pulls from `memory_cache`, Qdrant (`vector_context`), and the graph (`graph_context`) — all three are skipped entirely when `mode == "Online"`. Sets a human-readable `strategy` string surfaced to the frontend's Insight Panel.
-- **web_search**: only runs for `mode in ("Online", "Hybrid")`. Provider order: Tavily → Firecrawl → DuckDuckGo, first success wins. Query refinement before search also uses the fast Claude model.
+- **web_search**: only runs for `mode in ("Online", "Hybrid")`. Provider order: Tavily → Firecrawl → DuckDuckGo, first success wins. Query refinement before search also uses the fast Gemini model.
 - **memory_builder**: concatenates all four context lists, dedupes by exact content match, builds `fused_context` and `citations`.
-- **synthesizer**: calls the main `claude-sonnet-5` model (`SYNTHESIS_MODEL` — "the brain") with mode-specific strict instructions. It is expected to emit `[ARTIFACT: Name] <html>...</html> [/ARTIFACT]` blocks for comparisons/dashboards instead of markdown tables — the frontend (`ArtifactPanel.jsx` / `ChatMessage.jsx`) parses that marker.
+- **synthesizer**: calls the main `gemini-2.5-pro` model (`SYNTHESIS_MODEL` — "the brain") with mode-specific strict instructions. It is expected to emit `[ARTIFACT: Name] <html>...</html> [/ARTIFACT]` blocks for comparisons/dashboards instead of markdown tables — the frontend (`ArtifactPanel.jsx` / `ChatMessage.jsx`) parses that marker.
 - **verifier**: purely heuristic (no LLM call) confidence scoring based on bad-phrase detection, answer length, citation density (`[Source:` count), and markdown structure — feeds `should_loop`, which retries through `planner` at most once if confidence < 60.
 
 `mode` is one of `"Private"` (internal docs only), `"Hybrid"` (internal + web), or `"Online"` (web only) — this string is threaded through nearly every node and changes both retrieval and the synthesis system prompt's strictness.

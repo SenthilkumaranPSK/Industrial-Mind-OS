@@ -46,13 +46,13 @@ class ImmunitySystem:
         try:
             import os
             import time
-            api_key = os.getenv("ANTHROPIC_API_KEY")
+            api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
-                logger.error("Macrophage: ANTHROPIC_API_KEY missing.")
+                logger.error("Macrophage: GOOGLE_API_KEY missing.")
                 return {"status": "error"}
 
-            from langchain_anthropic import ChatAnthropic
-            llm = ChatAnthropic(model="claude-sonnet-5", temperature=0.0, anthropic_api_key=api_key)
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.0, google_api_key=api_key)
             prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", user_prompt)])
             
             chain = prompt | llm

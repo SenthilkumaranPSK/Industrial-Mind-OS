@@ -131,18 +131,18 @@ async def upload_document(
         elif ext in ["png", "jpg", "jpeg"]:
             try:
                 import base64
-                from langchain_anthropic import ChatAnthropic
+                from langchain_google_genai import ChatGoogleGenerativeAI
                 from langchain_core.messages import HumanMessage
                 import os
 
-                api_key = os.getenv("ANTHROPIC_API_KEY")
+                api_key = os.getenv("GOOGLE_API_KEY")
                 if not api_key:
-                    raise Exception("ANTHROPIC_API_KEY missing for Vision OCR.")
+                    raise Exception("GOOGLE_API_KEY missing for Vision OCR.")
 
                 base64_image = base64.b64encode(content).decode('utf-8')
                 mime_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
 
-                llm = ChatAnthropic(model="claude-sonnet-5", temperature=0.0, anthropic_api_key=api_key)
+                llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.0, google_api_key=api_key)
 
                 prompt = (
                     "You are an elite Industrial OCR System. "
@@ -153,7 +153,7 @@ async def upload_document(
                 msg = llm.invoke([
                     HumanMessage(content=[
                         {"type": "text", "text": prompt},
-                        {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": base64_image}}
+                        {"type": "image_url", "image_url": f"data:{mime_type};base64,{base64_image}"}
                     ])
                 ])
 
