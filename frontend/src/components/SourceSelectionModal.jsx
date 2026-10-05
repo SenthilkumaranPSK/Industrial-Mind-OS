@@ -126,17 +126,30 @@ export default function SourceSelectionModal({ isOpen, onClose, uploadedFiles, o
         </div>
 
         {/* Footer */}
-        <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
-          <div className="text-xs font-semibold text-slate-400">
-            {selected.length} source{selected.length !== 1 ? 's' : ''} active
+        <div className="p-5 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between">
+          <div className="text-xs font-semibold text-slate-500">
+            {uploadedFiles.length === 0
+              ? 'No documents uploaded (Web / General mode)'
+              : selected.length === 0
+              ? 'All documents active (unfiltered)'
+              : `${selected.length} of ${uploadedFiles.length} sources active`}
           </div>
-          <button
-            onClick={() => onConfirm(selected)}
-            disabled={selected.length === 0}
-            className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-sm transition-all shadow-lg shadow-indigo-200 disabled:opacity-50 disabled:shadow-none transform active:scale-95"
-          >
-            Power up Chat
-          </button>
+          <div className="flex items-center gap-2">
+            {uploadedFiles.length > 0 && selected.length > 0 && (
+              <button
+                onClick={() => setSelected([])}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 rounded-xl hover:bg-slate-200/50 transition-colors"
+              >
+                Search All
+              </button>
+            )}
+            <button
+              onClick={() => onConfirm(selected)}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md shadow-indigo-200 transform active:scale-95"
+            >
+              {uploadedFiles.length === 0 ? 'Continue to Chat' : selected.length === 0 ? 'Search All Sources' : 'Apply Filter'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

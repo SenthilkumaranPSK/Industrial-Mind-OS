@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 export default function Sidebar({
+  user,
   onLogout, onUpload, onConfluenceSync, onDeleteFile, isUploading,
   uploadedFiles, chats, currentChatId, onSelectChat, onNewChat,
   onRenameChat, onDeleteChat, onClose, onShowGraph, onShowMindMap,
@@ -109,17 +110,26 @@ export default function Sidebar({
                     <div className="p-4 text-center text-slate-500 text-xs">No proactive alerts. System is fully compliant.</div>
                   ) : (
                     alerts.map(alert => (
-                      <div key={alert.id} className="p-3 border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
-                        <div className="flex gap-2">
+                      <div key={alert.id} className="p-3 border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors flex items-start justify-between gap-2 group">
+                        <div className="flex gap-2 min-w-0">
                           <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${alert.type === 'compliance' ? 'text-rose-400' : 'text-amber-400'}`} />
-                          <div>
+                          <div className="min-w-0">
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                               {alert.type === 'compliance' ? 'Compliance Gap' : 'Historical Pattern'}
                             </p>
-                            <p className="text-xs text-slate-200 leading-snug">{alert.message}</p>
-                            <p className="text-[9px] text-slate-500 mt-1">Source: {alert.source}</p>
+                            <p className="text-xs text-slate-200 leading-snug break-words">{alert.message}</p>
+                            <p className="text-[9px] text-slate-500 mt-1 truncate">Source: {alert.source}</p>
                           </div>
                         </div>
+                        {onDismissAlert && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onDismissAlert(alert.id); }}
+                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-700 transition-colors flex-shrink-0"
+                            title="Dismiss Alert"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))
                   )}
@@ -357,12 +367,12 @@ export default function Sidebar({
             onClick={() => setShowProfile(!showProfile)}
             className={`flex items-center gap-2.5 flex-1 overflow-hidden p-2 rounded-xl hover:bg-slate-800 transition-all text-left ${showProfile ? 'bg-slate-800 ring-1 ring-slate-700' : ''}`}
           >
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-[10px] flex-shrink-0 shadow shadow-indigo-500/30 ring-2 ring-indigo-900">
-              ME
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-[10px] flex-shrink-0 shadow shadow-indigo-500/30 ring-2 ring-indigo-900 uppercase">
+              {user?.username ? user.username.slice(0, 2) : user?.email ? user.email.slice(0, 2) : 'ME'}
             </div>
             <div className="flex-1 overflow-hidden">
-              <p className="text-xs font-bold text-slate-200 truncate">My Workspace</p>
-              <p className="text-[9px] text-slate-500 font-semibold tracking-wider uppercase">Industrial Mind OS</p>
+              <p className="text-xs font-bold text-slate-200 truncate">{user?.username || 'My Workspace'}</p>
+              <p className="text-[9px] text-slate-500 truncate tracking-wide">{user?.email || 'Industrial Mind OS'}</p>
             </div>
           </button>
           <button

@@ -9,6 +9,7 @@ from storage.vector_db import vector_db
 from storage.graph_db import graph_db
 from storage.memory_cache import memory_cache
 from core.embeddings import LocalEmbedder
+from agents.verification import score_answer
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -35,13 +36,14 @@ class AgentState(TypedDict):
     steps_taken: List[dict]
     retry_count: int
     files: List[str]  # Restricted knowledge scope for this chat
+    owner_id: str     # Whose knowledge base to read; None means unscoped
 
 def run_llm(system_prompt: str, user_prompt: str) -> str:
     """Helper to query Gemini (the main reasoning brain) for synthesis"""
     try:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            return "Error: GOOGLE_API_KEY not found in .env file."
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key or api_key.startswith("paste-") or api_key.startswith("your-"):
+            return "GOOGLE_API_KEY is not configured or is a placeholder. Please set a valid Google Gemini API key in `backend/.env` to enable AI synthesis."
 
         llm = ChatGoogleGenerativeAI(model=SYNTHESIS_MODEL, temperature=0.0, google_api_key=api_key)
         prompt = ChatPromptTemplate.from_messages([("system", "{sys}"), ("human", "{usr}")])
@@ -57,21 +59,24 @@ def planning_node(state: AgentState):
     state["steps_taken"] = state.get("steps_taken", [])
     state["steps_taken"].append({"step": "Root Cause Analysis (RCA) / Query Decomposition", "status": "Done"})
     
-    state["original_query"] = state["query"]
+    if not state.get("original_query"):
+        state["original_query"] = state["query"]
     state["retry_count"] = state.get("retry_count", 0)
     
     # We let the fast model rephrase or simplify the query if needed
     if " and " in state["query"].lower() or "compare" in state["query"].lower():
         system = "You are the Planning Agent. Rephrase the user query into clear search engine keywords. Output ONLY the rephrased query."
-        # Use a faster, smaller model for planning
-        api_key = os.getenv("GOOGLE_API_KEY")
-        llm_fast = ChatGoogleGenerativeAI(model=FAST_MODEL, temperature=0.0, google_api_key=api_key)
-        prompt = ChatPromptTemplate.from_messages([("system", system), ("human", f"Fix this: {state['query']}")])
-        rephrased_content = (prompt | llm_fast).invoke({}).content
-        
-        if rephrased_content:
-            state["query"] = rephrased_content.strip()
-            logger.info(f"Query rephrased to: {state['query']}")
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if api_key and not api_key.startswith("paste-") and not api_key.startswith("your-"):
+            try:
+                llm_fast = ChatGoogleGenerativeAI(model=FAST_MODEL, temperature=0.0, google_api_key=api_key)
+                prompt = ChatPromptTemplate.from_messages([("system", system), ("human", f"Fix this: {state['query']}")])
+                rephrased_content = (prompt | llm_fast).invoke({}).content
+                if rephrased_content:
+                    state["query"] = rephrased_content.strip()
+                    logger.info(f"Query rephrased to: {state['query']}")
+            except Exception as e:
+                logger.warning(f"Planning LLM call failed, using original query: {e}")
             
     return state
 
@@ -83,7 +88,9 @@ def adaptive_retrieval_node(state: AgentState):
     # 1. Fetch Direct Memory (Small files that bypassed RAG, filtered by chat selection)
     # Only in Private or Hybrid mode
     if state.get("mode", "Private") in ("Private", "Hybrid"):
-        state["memory_context"] = memory_cache.get_context(state.get("files"))
+        state["memory_context"] = memory_cache.get_context(
+            state.get("files"), owner_id=state.get("owner_id")
+        )
     else:
         state["memory_context"] = []
     
@@ -93,7 +100,10 @@ def adaptive_retrieval_node(state: AgentState):
             embedder = LocalEmbedder.get_embedder()
             query_vector = embedder.embed_query(state["query"])
             # Pass file filter to vector search for chat isolation
-            results = vector_db.search(query_vector, limit=10, file_filter=state.get("files"))
+            results = vector_db.search(
+                query_vector, limit=10,
+                file_filter=state.get("files"), owner_id=state.get("owner_id"),
+            )
             state["vector_context"] = [
                 {"source": r.payload.get("file_name", "Unknown"), "content": r.payload.get("text", "")} 
                 for r in results
@@ -111,7 +121,9 @@ def adaptive_retrieval_node(state: AgentState):
         g_ctx = []
         for w in keywords:
             if len(w) > 4:  # Quick keyword rule
-                g_ctx.extend(graph_db.get_context_for_entity(w, file_filter=state.get("files")))
+                g_ctx.extend(graph_db.get_context_for_entity(
+                    w, file_filter=state.get("files"), owner_id=state.get("owner_id")
+                ))
         state["graph_context"] = g_ctx
     else:
         state["graph_context"] = []
@@ -150,8 +162,8 @@ def web_search_node(state: AgentState):
     
     search_query = state["query"]
     # 0. Quick Keyword Refinement
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if api_key:
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if api_key and not api_key.startswith("paste-") and not api_key.startswith("your-"):
         try:
             refine_sys = "You are a Search Expert. Convert the user query into 3-5 high-intent search keywords. Output ONLY keywords."
             llm_fast = ChatGoogleGenerativeAI(model=FAST_MODEL, temperature=0.0, google_api_key=api_key)
@@ -229,8 +241,8 @@ def web_search_node(state: AgentState):
             # Modern usage for DDGS 6.x
             results = list(ddgs.text(search_query, max_results=8))
             state["web_context"] = [
-                {"source": f"Web: {r['href']}", "content": r["body"], "url": r["href"]} 
-                for r in results
+                {"source": f"Web: {r.get('title') or r.get('href', 'Web')}", "content": r.get("body", ""), "url": r.get("href")} 
+                for r in results if r.get("body")
             ]
         logger.info(f"WebSearch: Fetched {len(state['web_context'])} DDG results.")
     except Exception as e:
@@ -244,9 +256,9 @@ def memory_builder_node(state: AgentState):
     state["steps_taken"].append({"step": "Unified Asset Brain Fusion", "status": "Done"})
     
     all_records = (
-        state["vector_context"] +
-        state["graph_context"] +
-        state["memory_context"] +
+        state.get("vector_context", []) +
+        state.get("graph_context", []) +
+        state.get("memory_context", []) +
         state.get("web_context", [])
     )
     
@@ -254,9 +266,15 @@ def memory_builder_node(state: AgentState):
     seen_content = set()
     unique_records = []
     for r in all_records:
-        if r["content"] not in seen_content:
-            seen_content.add(r["content"])
-            unique_records.append(r)
+        if r and r.get("content") and str(r["content"]).strip():
+            content = str(r["content"]).strip()
+            if content not in seen_content:
+                seen_content.add(content)
+                unique_records.append({
+                    "source": r.get("source", "Unknown Source"),
+                    "content": content,
+                    "url": r.get("url")
+                })
     
     state["citations"] = unique_records
     
@@ -309,41 +327,9 @@ def verifier_node(state: AgentState):
     logger.info("Agent [Verifier]: Grading the Synthesis Output")
     state["steps_taken"].append({"step": "Safety & Compliance Validation", "status": "Done"})
 
-    answer = state.get("final_answer", "")
-    
-    # Fast heuristic scoring - dynamic rather than static
-    score = 80.0  # Base
-    
-    bad_signals = [
-        "i apologize", "no context", "no information", "cannot find",
-        "i don't have", "not provided", "no provided", "error connecting", "system:", "no web information found"
-    ]
-    
-    if any(sig in answer.lower() for sig in bad_signals):
-        score = max(40.0, 55.0 - (len(answer) % 15))  # Low quality signals detected
-    elif len(answer) < 80:
-        score = 60.0 + (len(answer) / 10)  # Answer too short to be useful
-    elif state.get("fused_context"):
-        # Dynamic scoring for valid answers
-        score = 84.0
-        
-        # 1. Reward richness and length (up to +6 points)
-        score += min(6.0, len(answer) / 250)
-        
-        # 2. Reward proper citations (up to +5 points)
-        citation_count = answer.count("[Source:")
-        score += min(5.0, citation_count * 1.25)
-        
-        # 3. Reward structured markdown (up to +3 points)
-        if "- " in answer or "1. " in answer or "**" in answer:
-            score += 2.0
-        if "[ARTIFACT:" in answer:
-            score += 1.5
-            
-        score = round(min(98.5, score), 1)
-    else:
-        score = 75.0 # fallback when context is strangely missing but answer is passed normally
-    
+    # Scoring rules live in agents/verification.py so they stay unit-testable
+    score = score_answer(state.get("final_answer", ""), bool(state.get("fused_context")))
+
     state["confidence"] = score
     # Only retry once if score is really low and data exists
     state["retry_count"] = state.get("retry_count", 0) + 1
@@ -383,8 +369,9 @@ workflow.add_conditional_edges("verifier", should_loop, {"planner": "planner", E
 
 orchestrator_target = workflow.compile()
 
-def process_query_workflow(query: str, mode: str = "Private", files: List[str] = None):
-    """Triggers the multi-agent pipeline with the chosen mode and file filter."""
+def process_query_workflow(query: str, mode: str = "Private", files: List[str] = None,
+                           owner_id: str = None):
+    """Triggers the multi-agent pipeline with the chosen mode, file filter and owner scope."""
     initial_state = {
         "query": query,
         "original_query": "",
@@ -400,7 +387,8 @@ def process_query_workflow(query: str, mode: str = "Private", files: List[str] =
         "strategy": "",
         "steps_taken": [],
         "retry_count": 0,
-        "files": files or []
+        "files": files or [],
+        "owner_id": owner_id,
     }
     final_output = orchestrator_target.invoke(initial_state)
     return final_output

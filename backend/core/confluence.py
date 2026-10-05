@@ -76,33 +76,37 @@ class ConfluenceSync:
                         
                         # 3. Route to proper Ingestion Pipeline
                         nodes = ingestion_pipeline.process_document(filename, markdown_text)
-                        
+
+                        # A sync is re-run by design, so clear the previous revision of
+                        # this page first — otherwise every sync duplicates its chunks.
+                        vector_db.delete_by_filename(filename, owner_id=user_id)
+                        graph_db.delete_by_filename(filename, owner_id=user_id)
+
                         # Embed into Vector and Graph
                         from core.embeddings import LocalEmbedder
                         embedder = LocalEmbedder.get_embedder()
-                        
-                        chunk_vectors = []
-                        chunk_payloads = []
-                        
-                        for node in nodes:
-                            vector = embedder.embed_query(node["text"])
-                            chunk_vectors.append(vector)
-                            chunk_payloads.append({
-                                "file_name": filename, 
-                                "source": f"https://{domain}/wiki/spaces/{space_key}", 
-                                "chunk_index": node.get("metadata", {}).get("chunk_index", 0), 
-                                "user_id": user_id,
-                                "text": node["text"]
-                            })
-                            
+
+                        # One batched call rather than one round-trip per chunk.
+                        chunk_vectors = embedder.embed_documents([n["text"] for n in nodes])
+                        chunk_payloads = [
+                            {
+                                "file_name": filename,
+                                "source": f"https://{domain}/wiki/spaces/{space_key}",
+                                "chunk_index": node.get("metadata", {}).get("chunk_index", 0),
+                                "user_id": str(user_id),
+                                "text": node["text"],
+                            }
+                            for node in nodes
+                        ]
+
                         if chunk_vectors:
                             vector_db.upsert_vectors(chunk_vectors, chunk_payloads)
                         
                         # Populate Graph DB using our advanced multi-hop linking
-                        ingestion_pipeline.populate_graph(filename, nodes)
+                        ingestion_pipeline.populate_graph(filename, nodes, owner_id=user_id)
                         
                         # Store in fast memory cache for direct retrieval
-                        memory_cache.store_file(filename, markdown_text[:5000])
+                        memory_cache.store_file(filename, markdown_text[:5000], owner_id=user_id)
                         
                         total_pages += 1
                         

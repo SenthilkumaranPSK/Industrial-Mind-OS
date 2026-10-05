@@ -25,9 +25,21 @@ app = FastAPI(
 )
 
 # CORS Configuration - Allow Frontend Origin
+# Comma-separated list in CORS_ORIGINS; defaults to the local Vite dev servers.
+# Note: "*" with allow_credentials=True is rejected by browsers, so origins are
+# always explicit here.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
+    ).split(",")
+    if origin.strip()
+]
+logger.info(f"CORS allowed origins: {CORS_ORIGINS}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

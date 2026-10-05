@@ -9,6 +9,7 @@ import Register from './components/Auth/Register';
 import GraphVisualizer from './components/GraphVisualizer';
 import ArtifactPanel from './components/ArtifactPanel';
 import MindMap from './components/MindMap';
+import { API_URL } from './api';
 
 export default function App() {
   // --- 1. ALL PRIMARY STATE & REFS ---
@@ -76,7 +77,7 @@ export default function App() {
     const newId = Date.now();
     setChats(prev => [{ id: newId, title: 'New Chat', messages: [], insights: null, selectedFiles: [] }, ...prev]);
     setCurrentChatId(newId);
-    setShowSourceSelection(true);
+    setShowSourceSelection(false);
   };
 
   const handleUpdateChatFiles = (chatId, files) => {
@@ -107,7 +108,7 @@ export default function App() {
   const fetchUploadedFiles = async () => {
     if (!token) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/documents`, {
+      const res = await fetch(`${API_URL}/api/v1/documents`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.status === 401) { handleLogout(); return; }
@@ -123,7 +124,7 @@ export default function App() {
   const fetchSuggestions = async () => {
     if (!token) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/suggestions`, {
+      const res = await fetch(`${API_URL}/api/v1/suggestions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.status === 401) { handleLogout(); return; }
@@ -137,7 +138,7 @@ export default function App() {
   const fetchAlerts = async () => {
     if (!token) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/alerts`, {
+      const res = await fetch(`${API_URL}/api/v1/alerts`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -149,7 +150,7 @@ export default function App() {
 
   const dismissAlert = async (alertId) => {
     try {
-      await fetch(`http://localhost:8000/api/v1/alerts/${alertId}`, {
+      await fetch(`${API_URL}/api/v1/alerts/${alertId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -163,7 +164,7 @@ export default function App() {
     formData.append('file', file);
     setIsUploading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/upload`, {
+      const response = await fetch(`${API_URL}/api/v1/upload`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData
@@ -186,7 +187,7 @@ export default function App() {
     if (!config || !config.domain) return;
     setIsUploading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/confluence/sync`, {
+      const response = await fetch(`${API_URL}/api/v1/confluence/sync`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -212,7 +213,7 @@ export default function App() {
   const handleDeleteFile = async (filename) => {
     if (!window.confirm("Are you sure?")) return;
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/documents/${encodeURIComponent(filename)}`, {
+      const response = await fetch(`${API_URL}/api/v1/documents/${encodeURIComponent(filename)}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -251,7 +252,7 @@ export default function App() {
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/query`, {
+      const response = await fetch(`${API_URL}/api/v1/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -298,7 +299,7 @@ export default function App() {
     const fetchUser = async () => {
       if (!token) { setUser(null); return; }
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/auth/me`, {
+        const res = await fetch(`${API_URL}/api/v1/auth/me`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.ok) { setUser(await res.json()); }
@@ -370,6 +371,7 @@ export default function App() {
       <div className={`fixed md:relative z-30 h-full transition-all duration-300 ease-in-out border-r border-slate-800 ${isSidebarOpen ? 'translate-x-0 w-72' : '-translate-x-full w-0 md:translate-x-0 md:w-0 overflow-hidden'}`}>
         <div className="w-72 h-full">
           <Sidebar
+            user={user}
             onLogout={handleLogout} onUpload={handleUpload} onConfluenceSync={handleConfluenceSync} onDeleteFile={handleDeleteFile}
             isUploading={isUploading} uploadedFiles={uploadedFiles} chats={chats} currentChatId={currentChatId}
             onSelectChat={setCurrentChatId} onNewChat={createNewChat} onRenameChat={handleRenameChat} onDeleteChat={handleDeleteChat}

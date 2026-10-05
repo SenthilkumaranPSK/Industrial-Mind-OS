@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
 import AuthShell, { inputStyle, iconStyle, focusInput, blurInput } from './AuthShell';
+import { API_URL } from '../../api';
 
 export default function Register({ onRegister, onNavigateLogin }) {
   const [email, setEmail]       = useState('');
@@ -12,7 +13,7 @@ export default function Register({ onRegister, onNavigateLogin }) {
     e.preventDefault();
     setLoading(true); setError('');
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/auth/register`, {
+      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });

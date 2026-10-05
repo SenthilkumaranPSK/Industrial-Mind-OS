@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
 import AuthShell, { inputStyle, iconStyle, focusInput, blurInput } from './AuthShell';
+import { API_URL } from '../../api';
 
 export default function Login({ onLogin, onNavigateRegister }) {
   const [email, setEmail]       = useState('');
@@ -14,7 +15,7 @@ export default function Login({ onLogin, onNavigateRegister }) {
     try {
       const fd = new URLSearchParams();
       fd.append('username', email); fd.append('password', password);
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/auth/login`, {
+      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: fd,
       });
       if (!res.ok) throw new Error('Invalid credentials. Please try again.');

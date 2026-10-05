@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { Share2, RefreshCw, Maximize2, X } from 'lucide-react';
+import { API_URL } from '../api';
 
 export default function GraphVisualizer({ onClose }) {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
@@ -15,7 +16,7 @@ export default function GraphVisualizer({ onClose }) {
     setLoading(true);
     try {
       const token = localStorage.getItem('imos_token');
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/graph/data`, {
+      const response = await fetch(`${API_URL}/api/v1/graph/data`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {

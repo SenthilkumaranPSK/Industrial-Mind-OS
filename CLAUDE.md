@@ -10,7 +10,7 @@ Two independent apps in one repo, no shared tooling/monorepo config:
 - `backend/` — FastAPI + LangGraph (Python)
 - `frontend/` — React + Vite (JS)
 
-There are no automated tests in this repo (no test files, no test runner configured).
+`README.md` is the product-facing overview and its stack section is current. It duplicates the setup steps and env-var list below — keep the two in sync when either changes.
 
 ## Commands
 
@@ -21,9 +21,22 @@ venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
-Requires a `.env` in `backend/` (copy `backend/.env.example` — see Environment variables below).
+Requires a `.env` in `backend/` (copy `backend/.env.example` — see Environment variables below). The app **refuses to start without `JWT_SECRET_KEY`**; that's deliberate (see Security invariants).
 
-Use a CPython 3.11 interpreter for `venv` — pinned deps like `bcrypt==3.2.2` don't have wheels for newer interpreters (e.g. an MSYS2/mingw64 `python` resolving to 3.14 if it's first on `PATH`), which silently produces a broken venv: pip reports success, but `import bcrypt`/`passlib` then fails because the resolver quietly dropped them. In Git Bash on Windows, `py -3.11 -m venv venv` can still pick up the wrong interpreter (the `-3.11` selector doesn't reliably reach the `py` launcher through Git Bash) — check with `venv/Scripts/python.exe --version`, and if it's wrong, delete `venv/` and recreate it by invoking the 3.11 `python.exe` directly by its full path instead of via `py`.
+Use a CPython 3.11 interpreter for `venv`. `bcrypt` is no longer hard-pinned, so newer interpreters are less likely to produce the silently-broken venv this repo used to hit, but 3.11 is what the existing `venv/` uses and what the deps are known-good on. If `pip install` reports success but `import bcrypt`/`passlib` then fails, the resolver quietly dropped them — check `venv/Scripts/python.exe --version`, delete `venv/` and recreate it by invoking the 3.11 `python.exe` directly by its full path (in Git Bash the `py -3.11` selector doesn't reliably reach the `py` launcher).
+
+First backend start downloads the HuggingFace `all-MiniLM-L6-v2` embedding model (see Embeddings below) — expect a slow first run and a working network connection.
+
+### Tests (from `backend/`)
+```bash
+pip install -r requirements-dev.txt
+python -m pytest                        # whole suite
+python -m pytest tests/test_scoping.py  # one file
+python -m pytest -k "legacy"            # one test by name
+```
+`pytest.ini` sets `pythonpath = .` so tests import `core.*`/`storage.*` without installing the package. The suite is deliberately built out of seams that need no LLM, no network and no Qdrant lock: `core/text_utils.py`, `agents/verification.py`, the splitter (via an injected fake embedder), and the per-user scoping rules (via `tmp_path`-backed stores). **Keep it that way** — anything that imports `agents/orchestrator.py` or `api/router.py` transitively boots the Qdrant local client and takes the `qdrant_data/` lock, which fails if a backend is already running.
+
+There is no frontend test runner and no `lint` script.
 
 ### Frontend (from `frontend/`)
 ```bash
@@ -32,49 +45,79 @@ npm run dev       # Vite dev server
 npm run build
 npm run preview
 ```
-No `lint` or `test` script is defined in `package.json`.
+
+### Debugging endpoints
+`GET /health`, `GET /docs` (Swagger), and `GET /api/v1/graph/stats` — the last dumps node/edge counts, sample edges and the memory-cache file list *for the calling user*, and is the fastest way to see what's actually indexed.
 
 ## Environment variables (backend)
 
-Required:
-- `GOOGLE_API_KEY` — powers every LLM call (synthesis, planning/query-rephrasing, web-query refinement, image OCR, the immune-system auditor) via `langchain-google-genai` (Gemini). Nothing in the agent pipeline works without it.
-- `JWT_SECRET_KEY` — signs/verifies local auth JWTs (`core/security.py`). Falls back to a hardcoded dev default if unset — always set a real value outside local dev. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`.
+Required — the app will not start or will not function without these:
+- `GOOGLE_API_KEY` — powers every LLM call (synthesis, planning/query-rephrasing, web-query refinement, image OCR, the immune-system auditor) via `langchain-google-genai` (Gemini).
+- `JWT_SECRET_KEY` — signs/verifies local auth JWTs. `core/security.py` raises at import time if it's missing.
 
 Optional (feature-gated, code degrades gracefully if absent):
 - `TAVILY_API_KEY` — primary web search provider for Online/Hybrid mode.
 - `FIRE_CRAWL_API_KEY` — secondary web search fallback if Tavily is unset/fails.
 - If neither is set, web search falls back to `duckduckgo-search` (no key needed).
+- `CORS_ORIGINS` — comma-separated allowed browser origins. Defaults to the local Vite dev servers. Must be set when the frontend is deployed anywhere else.
+- `MAX_UPLOAD_MB` — upload size ceiling, default 25.
+- `QDRANT_URL` / `QDRANT_API_KEY` — switch Qdrant from local disk mode to a server (see below).
 
-Frontend: `VITE_API_URL` (defaults to `http://localhost:8000` when unset — note a couple of fetch calls in `App.jsx` hardcode `localhost:8000` directly instead of using this var, so don't assume every call respects a custom `VITE_API_URL`).
+Frontend: `VITE_API_URL`. `src/api.js` exports the single `API_URL` const every component imports; there are no hardcoded origins anywhere else.
 
 ## Architecture
 
-### Data stores are all local/embedded — there is no external DB server to stand up
-- **Vector DB**: `backend/storage/vector_db.py` — Qdrant client in **local disk-persisted mode** (`QdrantClient(path=...)`), storing to `backend/qdrant_data/`. Not a Qdrant server.
-- **Graph DB**: `backend/storage/graph_db.py` — a NetworkX `MultiDiGraph` (not Neo4j, despite `neo4j` being in requirements.txt) serialized to `backend/graph_db.json` on every write.
-- **Memory cache**: `backend/storage/memory_cache.py` — a plain dict serialized to `backend/memory_cache.json`. Small documents (<15,000 chars) are stored here directly and bypass vector embedding entirely ("direct injection").
-- **Auth/users**: `backend/db/database.py` (SQLAlchemy engine, `industrial_mind_os.db`) + `db/models.py` (`User` table) is the auth store — local JWT auth, not Supabase. `main.py` calls `Base.metadata.create_all` on startup to create tables. Passwords are hashed with passlib/bcrypt and tokens signed with `python-jose` in `core/security.py`; `api/auth.py::get_current_user` decodes the bearer token and loads the `User` row per-request. Registration is email+password only — `username` is auto-derived from the email's local part (`_derive_username` in `api/auth.py`), with a numeric suffix on collision.
+### Security invariants
+Three rules the code now enforces; don't regress them.
 
-Because these stores are files/embedded processes, deleting a document must clean up three places in lockstep: `vector_db.delete_by_filename`, `memory_cache.delete_file`, `graph_db.delete_by_filename` (all wired together in `api/router.py`'s `DELETE /documents/{filename}`).
+1. **Every store is scoped by `owner_id`.** `vector_db.search`/`delete_by_filename`/`list_filenames`/`count_by_filename`, `memory_cache.get_context`/`list_files`/`delete_file`, `graph_db.get_context_for_entity`/`get_graph_data`/`delete_by_filename`/`get_random_entities`, and `immune_system.list_alerts`/`dismiss` all take an owner and filter on it. The API layer passes `current_user["id"]` into all of them. Adding a new read path means adding the owner filter too.
+2. **Legacy un-owned data stays readable by everyone.** Rows written before scoping existed have `owner_id: None` (memory cache, graph edges) or no `user_id` key at all (Qdrant points). Every visibility check treats those as globally visible, so upgrading didn't orphan existing data. `DirectMemoryCache._load` logs a warning naming the legacy files. If you ever want strict isolation, that fallback is the thing to remove — deliberately, not by accident.
+3. **No secrets or internals in HTTP responses.** Handlers log with `logger.exception` and return a generic `detail`. `JWT_SECRET_KEY` has no default. CORS origins are explicit (`allow_origins=["*"]` with `allow_credentials=True` is rejected by browsers anyway).
+
+Ownership is enforced on delete by checking whether anything was actually removed: `DELETE /documents/{filename}` returns 404 when all three stores report zero removals, so "doesn't exist" and "belongs to someone else" are indistinguishable to the caller.
+
+### Data stores are all local/embedded — there is no external DB server to stand up
+- **Vector DB**: `backend/storage/vector_db.py` — Qdrant. Defaults to **local disk-persisted mode** (`QdrantClient(path=...)`) writing to `backend/qdrant_data/`, collection `imos_collection`. Local mode holds an **exclusive lock** on that directory, so only one backend process can run at a time; set `QDRANT_URL` to use a real server and lift that limit.
+- **Graph DB**: `backend/storage/graph_db.py` — a NetworkX `MultiDiGraph` (not Neo4j) serialized to `backend/graph_db.json`.
+- **Memory cache**: `backend/storage/memory_cache.py` — a dict of `{filename: {"content": str, "owner_id": str|None}}` serialized to `backend/memory_cache.json`. Small documents (<15,000 chars) live here and bypass vector embedding entirely ("direct injection").
+- **Alerts**: `backend/alerts.json` — immune-system findings, persisted because they're the output of an expensive LLM call.
+- **Auth/users**: `backend/db/database.py` (SQLAlchemy, `industrial_mind_os.db`) + `db/models.py` (`User`). `main.py` calls `Base.metadata.create_all` on startup. Passwords hashed with passlib/bcrypt, tokens signed with `python-jose` in `core/security.py`; `api/auth.py::get_current_user` decodes the bearer token and loads the `User` row per-request. Registration is email+password only — `username` is derived from the email's local part (`_derive_username`), with a numeric suffix on collision.
+
+All of these files/directories are gitignored; deleting them resets state.
+
+Deleting a document must clean up three places in lockstep — `vector_db.delete_by_filename`, `memory_cache.delete_file`, `graph_db.delete_by_filename` — all wired together in `DELETE /documents/{filename}`.
+
+### Graph writes must be batched
+`graph_db.add_relationship(..., autosave=True)` serializes the **entire** graph to JSON on every call. Bulk paths pass `autosave=False` and call `graph_db.save()` once at the end (`ingestion_pipeline.populate_graph` does this). Per-edge saving is what forced the old 100-chunk indexing cap; if you add a bulk write path, batch it the same way or you'll reintroduce quadratic ingest.
+
+### Embeddings
+`core/embeddings.py::LocalEmbedder` is a lazy singleton wrapping HuggingFace `all-MiniLM-L6-v2`, run **locally on CPU** — embeddings never hit an API. Its 384 dimensions are hardcoded as the Qdrant collection's `vector_size`, so swapping the model requires deleting `backend/qdrant_data/` and re-ingesting. The same embedder serves chunk embedding and the splitter's similarity check.
 
 ### Request flow
-`main.py` mounts two routers under `/api/v1`: `api/auth.py` (`/auth/*` — register/login/`get_current_user`, backed by the local SQLite `User` table and JWTs, see Auth/users above) and `api/router.py` (everything else: upload, query, documents, alerts, graph, confluence sync).
+`main.py` mounts two routers under `/api/v1`: `api/auth.py` (`/auth/*`) and `api/router.py` (`/upload`, `/query`, `/documents`, `/alerts`, `/graph/data`, `/graph/stats`, `/suggestions`, `/confluence/sync`).
 
-### Ingestion (`POST /api/v1/upload` in `api/router.py`)
-Per-extension text extraction happens inline in the route handler (not a shared parser abstraction):
+The LangGraph pipeline and the vision OCR call are synchronous and slow, so the handlers wrap them in `run_in_threadpool` rather than calling them inline — doing otherwise blocks the event loop for every other request, including `/health`.
+
+### Ingestion (`POST /api/v1/upload`)
+Uploads are read fully into memory and rejected above `MAX_UPLOAD_MB`. Per-extension extraction happens inline in the route handler (not a shared parser abstraction):
 - `csv` → manual `csv.reader`, one "[Record N] Col: val | ..." block per row
 - `pptx` → `python-pptx`, shape text per slide
-- `pdf` → `pypdf`, then `clean_spaced_text()` repairs the "s p a c e d   o u t" character-spacing artifact common in PDF extraction
+- `pdf` → `pypdf`, then `core/text_utils.clean_spaced_text()` repairs the "s p a c e d   o u t" artifact. That regex is word-boundary anchored on purpose: an unanchored version eats the previous word's last letter and glues on the next word.
 - `docx` → `python-docx`, falls back to raw UTF-8 decode on failure
-- `png`/`jpg`/`jpeg` → sent to `gemini-2.5-pro` (vision) for OCR/structured extraction (requires `GOOGLE_API_KEY`)
+- `png`/`jpg`/`jpeg` → `gemini-2.5-pro` vision OCR (requires `GOOGLE_API_KEY`)
 - everything else → raw UTF-8 decode
 
-Then: **<15,000 chars** → stored directly in `memory_cache` + graph keyword edges built (bypasses embedding/Qdrant), and the immune system's `scan_for_conflicts` runs as a background task. **>=15,000 chars** → chunked via `storage/ingestion.py`'s semantic splitter (splits on sentence boundaries, breaks a chunk when cosine similarity between consecutive sentence embeddings drops below 0.70, using the local HF embedder), embedded, upserted to Qdrant, and graph-populated — all in a `BackgroundTasks` job.
+Then `DIRECT_INJECTION_THRESHOLD` (15,000 chars) splits the paths:
+- **< threshold** → stored in `memory_cache`, graph edges built synchronously, immune scan queued as a background task.
+- **>= threshold** → chunked by `storage/ingestion.py`'s semantic splitter (sentence boundaries; breaks when cosine similarity between consecutive sentence embeddings drops below 0.70), embedded, upserted to Qdrant, graph-populated, then immune-scanned — all in a `BackgroundTasks` job.
 
-Graph population (`ingestion_pipeline.populate_graph`) is keyword co-occurrence, not entity extraction: it pulls stopword-filtered keywords (>=4 chars) per chunk and links adjacent keywords with a `co-occurs-with` edge tagged with the source filename. This is what `graph_db.get_context_for_entity` traverses at query time (a BFS over `MultiDiGraph`, filtered by `file_filter` when a chat has restricted its knowledge scope).
+Both paths **replace** on re-upload: stale vectors and graph edges for that filename+owner are deleted before re-indexing, so uploading the same file twice doesn't double-count it at retrieval.
+
+`populate_graph` indexes every chunk by default. It accepts `max_chunks` for callers that want a ceiling, and logs a warning naming exactly what it skipped — silent truncation here reads as full coverage when it isn't. Graph population is keyword co-occurrence, not entity extraction: stopword-filtered keywords (>=4 chars, 20 per chunk) linked by `co-occurs-with` edges tagged with source filename and owner.
+
+`GET /documents` pages through the whole Qdrant collection via `list_filenames`. It must keep paginating: a single large document can exceed any one page of *points* and would otherwise hide every other file.
 
 ### Query pipeline — LangGraph agent (`backend/agents/orchestrator.py`)
-A `StateGraph` with a shared `AgentState` TypedDict, wired as:
 ```
 planner → adaptive_retrieval → web_search → memory_builder → synthesizer → verifier
                                                                               │
@@ -82,26 +125,26 @@ planner → adaptive_retrieval → web_search → memory_builder → synthesizer
                                                                               ↓
                                                                            planner (loop)
 ```
-- **planner**: rephrases multi-part/comparison queries into cleaner search keywords using the fast/cheap `gemini-2.5-flash` model (`FAST_MODEL` in `orchestrator.py`).
-- **adaptive_retrieval**: pulls from `memory_cache`, Qdrant (`vector_context`), and the graph (`graph_context`) — all three are skipped entirely when `mode == "Online"`. Sets a human-readable `strategy` string surfaced to the frontend's Insight Panel.
-- **web_search**: only runs for `mode in ("Online", "Hybrid")`. Provider order: Tavily → Firecrawl → DuckDuckGo, first success wins. Query refinement before search also uses the fast Gemini model.
-- **memory_builder**: concatenates all four context lists, dedupes by exact content match, builds `fused_context` and `citations`.
-- **synthesizer**: calls the main `gemini-2.5-pro` model (`SYNTHESIS_MODEL` — "the brain") with mode-specific strict instructions. It is expected to emit `[ARTIFACT: Name] <html>...</html> [/ARTIFACT]` blocks for comparisons/dashboards instead of markdown tables — the frontend (`ArtifactPanel.jsx` / `ChatMessage.jsx`) parses that marker.
-- **verifier**: purely heuristic (no LLM call) confidence scoring based on bad-phrase detection, answer length, citation density (`[Source:` count), and markdown structure — feeds `should_loop`, which retries through `planner` at most once if confidence < 60.
+- **planner**: rephrases multi-part/comparison queries using the fast/cheap `gemini-2.5-flash` (`FAST_MODEL`).
+- **adaptive_retrieval**: pulls from `memory_cache`, Qdrant, and the graph — all three skipped when `mode == "Online"`, all three scoped by `owner_id` and by the chat's `files` allowlist. Sets the `strategy` string shown in the Insight Panel.
+- **web_search**: only for `mode in ("Online", "Hybrid")`. Tavily → Firecrawl → DuckDuckGo, first success wins.
+- **memory_builder**: concatenates all four context lists, dedupes by exact content, builds `fused_context` and `citations`.
+- **synthesizer**: `gemini-2.5-pro` (`SYNTHESIS_MODEL`) with mode-specific strict instructions. Expected to emit `[ARTIFACT: Name] <html>...</html> [/ARTIFACT]` blocks for comparisons/dashboards instead of markdown tables.
+- **verifier**: no LLM call. Delegates to `agents/verification.py::score_answer` (pure function, unit-tested) which scores on refusal phrases, length, `[Source:` density and markdown structure. Feeds `should_loop`, which retries through `planner` once if confidence < 60.
 
-`mode` is one of `"Private"` (internal docs only), `"Hybrid"` (internal + web), or `"Online"` (web only) — this string is threaded through nearly every node and changes both retrieval and the synthesis system prompt's strictness.
+`mode` is `"Private"` / `"Hybrid"` / `"Online"` and is threaded through nearly every node, changing both retrieval and synthesis prompt strictness. `POST /query` post-processes `sources` per mode (Online drops anything without a `Web:` prefix; each mode has its own "nothing found" label).
 
-`files` on `AgentState` is a chat-scoped allowlist of filenames ("Document Gating") — when set, it filters both the Qdrant search (`file_filter` on `vector_db.search`) and the graph traversal (`file_filter` on `graph_db.get_context_for_entity`), so different chats can be scoped to different document subsets.
+`files` on `AgentState` is the chat-scoped filename allowlist ("Document Gating"); `owner_id` is the user scope. Both filter all three internal stores.
 
 ### Proactive Auditor / "Immune System" (`backend/immune/macrophage.py`)
-Runs as a `BackgroundTasks` job triggered only on the direct-injection (small-file) upload path. Compares the new document's full text against everything currently in `memory_cache` via one LLM call, asking it to flag CONTRADICTION / COMPLIANCE GAP / HISTORICAL PATTERN, or reply `SAFE`. Non-safe results are appended to an in-process `immune_system.alerts` list (not persisted to disk — resets on backend restart) and surfaced via `GET /api/v1/alerts` / `DELETE /api/v1/alerts/{id}`, driving the frontend's notification bell.
+Compares a newly ingested document against that user's `memory_cache` contents in one LLM call, flagging CONTRADICTION / COMPLIANCE GAP / HISTORICAL PATTERN or replying `SAFE`. Runs on **both** upload paths. Inputs are bounded (`MAX_EXISTING_KNOWLEDGE_CHARS`, `MAX_NEW_DOC_CHARS`) so a large knowledge base can't blow the context window, and the document is excluded from its own comparison set. Findings persist to `alerts.json` and surface via `GET /alerts` / `DELETE /alerts/{id}`, driving the notification bell.
 
 ### Confluence sync (`backend/core/confluence.py`)
-`POST /api/v1/confluence/sync` pulls all pages from a Confluence Cloud space via REST API + basic auth (email + API token), converts HTML to markdown (`markdownify`), and feeds pages through the same ingestion pipeline as file uploads.
+`POST /api/v1/confluence/sync` pulls all pages from a Confluence Cloud space (REST + basic auth), converts HTML to markdown (`markdownify`), and feeds pages through the same ingestion pipeline as uploads, stamped with the syncing user's id.
 
 ### Frontend structure
-Single-page app — despite `react-router-dom` being a dependency and a `src/pages/` directory existing (`Home.jsx`, `Query.jsx`, `Upload.jsx`), no `<Router>`/`<Routes>` is actually wired up in `App.jsx`/`main.jsx`. All state (auth token, chats, messages, uploaded files, alerts, active artifact) lives in `App.jsx` via `useState` and is passed down as props; per-chat history is persisted to `localStorage` keyed by user email. Treat `src/pages/*` as effectively unused legacy code unless you're the one wiring up routing.
+Single-page app. All state (auth token, chats, messages, uploaded files, alerts, active artifact) lives in `App.jsx` via `useState` and is passed down as props; per-chat history persists to `localStorage` keyed by user email (`imos_chats_<email>`, `imos_current_chat_<email>`). The auth token is `imos_token`, sent as a Bearer token on every call.
 
-Auth token (`imos_token`) is stored in `localStorage` and sent as a Bearer token on every API call; the backend validates it locally by decoding the JWT and loading the user from SQLite (`api/auth.py::get_current_user`) — no external auth provider involved.
+**Cleaned dead code**: Unused prototype pages (`src/pages/*`), `Hero.jsx`, `Layout.jsx`, `ChatMessage.jsx`, and the unused `react-router-dom` dependency have been removed.
 
-Key components: `ChatInterface.jsx`/`ChatMessage.jsx` (chat + `[ARTIFACT]` block rendering), `InsightPanel.jsx` (confidence/strategy/citations sidebar), `GraphVisualizer.jsx`/`MindMap.jsx` (`react-force-graph-2d` rendering of `GET /api/v1/graph/data`, server-capped at top 300 nodes by degree), `SourceSelectionModal.jsx` (per-chat document gating UI), `Sidebar.jsx` (file list + alerts bell). `components/Auth/AuthShell.jsx` holds the shared two-pane login/register layout (backdrop, pipeline diagram, feature grid, form card chrome); `Login.jsx`/`Register.jsx` supply only their form fields as children.
+Key components: `ChatInterface.jsx` (message list; strips `[ARTIFACT]` blocks from previews; owns the print-to-PDF audit export) and `ChatMessage.jsx` (bubble chrome + collapsible agent thought-process viewer); `MarkdownRenderer.jsx` owns the `[ARTIFACT: …][/ARTIFACT]` regex extraction and hands blocks to `ArtifactPanel.jsx`, which sniffs html/code/table type; `InsightPanel.jsx` (confidence/strategy/citations); `GraphVisualizer.jsx`/`MindMap.jsx` (`react-force-graph-2d` over `GET /graph/data`, server-capped at top 300 nodes by degree — the response carries `total_nodes` and `capped` so the UI can say so); `SourceSelectionModal.jsx` (document gating UI); `Sidebar.jsx` (file list + alerts bell). `components/Auth/AuthShell.jsx` holds the shared two-pane login/register layout; `Login.jsx`/`Register.jsx` supply only their form fields as children.

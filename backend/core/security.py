@@ -4,9 +4,19 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "industrial-mind-os-super-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+# Never fall back to a shipped default: a known signing key lets anyone mint a
+# token for any user. Fail loudly at import time instead.
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY is not set. Auth tokens cannot be signed safely without it.\n"
+        "Generate one with:\n"
+        '    python -c "import secrets; print(secrets.token_hex(32))"\n'
+        "then add it to backend/.env as JWT_SECRET_KEY=<value>."
+    )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

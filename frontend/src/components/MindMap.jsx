@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import ForceGraph2D from 'react-force-graph-2d';
 import * as d3 from 'd3-force';
 import { GitBranch, RefreshCw, X, Home, ZoomIn, Search, MessageSquare, Globe, Fingerprint, MousePointer2, ChevronRight, ChevronLeft } from 'lucide-react';
+import { API_URL } from '../api';
 
 // --- UTILITIES ---
 
@@ -152,7 +153,7 @@ export default function MindMap({ onClose, chatMessages = [] }) {
     setLoading(true);
     try {
       const token = localStorage.getItem('imos_token');
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/graph/data`, {
+      const response = await fetch(`${API_URL}/api/v1/graph/data`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
