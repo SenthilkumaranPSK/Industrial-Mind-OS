@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import os
 import pytest
 
-from api.rca_schemas import CitationObject, FiveWhyNode, TimelineEvent
+from api.rca_schemas import CitationObject, FishboneBranch, FiveWhyNode, TimelineEvent
 from services.rca_ingestion import (
     CitationRegistry,
     EvidenceCitationExtractor,
@@ -466,3 +466,137 @@ def test_verify_causal_grounding_flags_unsubstantiated_and_assumptions():
     assert node.is_unsubstantiated is True
     assert node.assumed_flag is True
     assert node.assumption_flag is True
+
+
+def test_timeline_extractor_zero_telemetry_reading_preservation():
+    """Verify that a reading of 0.0 (e.g. vibration: 0.0 mm/s) is preserved and processed for deviations."""
+    extractor = TimelineExtractor()
+    log_zero = {
+        "timestamp": "2023-11-04T08:00:00Z",
+        "description": "Standstill baseline reading",
+        "vibration_mm_s": 0.0,
+    }
+    events = extractor.reconstruct_timeline(equipment_tag="Pump-A12", telemetry_logs=[log_zero])
+    assert len(events) == 1
+    evt = events[0]
+    assert evt.parameters["vibration_mm_s"] == 0.0
+    assert "deviation_pct" in evt.parameters
+    assert evt.parameters["deviation_pct"] == -100.0
+    assert evt.parameters["is_exceeded"] is False
+    assert evt.parameters["is_trip_exceeded"] is False
+
+    # Also verify temperature 0.0 is preserved
+    log_temp_zero = {
+        "timestamp": "2023-11-04T08:05:00Z",
+        "description": "Chill test reading",
+        "temperature_c": 0.0,
+    }
+    events_temp = extractor.reconstruct_timeline(equipment_tag="Pump-A12", telemetry_logs=[log_temp_zero])
+    assert len(events_temp) == 1
+    assert events_temp[0].parameters["temperature_c"] == 0.0
+
+
+def test_timeline_extractor_none_description_handling():
+    """Verify that telemetry entries with description: None do not crash and generate valid TimelineEvents."""
+    extractor = TimelineExtractor()
+    log_none_desc = {"timestamp": "2023-11-04T08:00:00Z", "description": None}
+    events = extractor.reconstruct_timeline(equipment_tag="Pump-A12", telemetry_logs=[log_none_desc])
+    assert len(events) == 1
+    assert events[0].description is not None
+    assert len(events[0].description) >= 3
+    assert "Pump-A12" in events[0].description
+
+    # Also verify _classify_sentence handles None input without AttributeError
+    assert extractor._classify_sentence(None) == "MAINTENANCE_LOG"
+    assert extractor._classify_sentence("") == "MAINTENANCE_LOG"
+
+
+def test_timeline_extractor_preserves_preexisting_citations():
+    """Verify that _link_citations preserves pre-existing citation_ids on events and does not wipe them."""
+    extractor = TimelineExtractor()
+    c_existing = CitationObject(
+        citation_id="CITE-PREEXISTING-01",
+        source_doc="manual.pdf",
+        excerpt="Pump manual technical specs",
+    )
+    c_unrelated = CitationObject(
+        citation_id="CITE-UNRELATED-02",
+        source_doc="cafeteria.pdf",
+        excerpt="Cafeteria menu details",
+    )
+
+    log_with_cite = {
+        "timestamp": "2023-11-04T08:00:00Z",
+        "description": "Custom bearing vibration monitoring",
+        "citation_ids": [c_existing.citation_id],
+    }
+
+    # Reconstruct timeline passing an unrelated external citation
+    events = extractor.reconstruct_timeline(
+        equipment_tag="Pump-A12",
+        telemetry_logs=[log_with_cite],
+        citations=[c_unrelated],
+    )
+    assert len(events) == 1
+    # Pre-existing citation must be preserved!
+    assert c_existing.citation_id in events[0].citation_ids
+    # Event must NOT be marked unsubstantiated because it has a valid existing citation
+    assert events[0].is_unsubstantiated is False
+
+
+def test_verify_causal_grounding_supports_fishbone_branch():
+    """Verify that verify_causal_grounding safely handles FishboneBranch objects without raising ValueError."""
+    reg = CitationRegistry()
+    c1 = reg.register_citation(source_doc="doc1.txt", excerpt="Shaft misalignment causes vibration")
+
+    # Grounded branch
+    branch_grounded = FishboneBranch(
+        category="Machine",
+        causes=["Misaligned impeller shaft"],
+        citation_ids=[c1.citation_id],
+    )
+    # Ungrounded branch
+    branch_ungrounded = FishboneBranch(
+        category="Man",
+        causes=["Operator error during startup"],
+        citation_ids=["CITE-NONEXISTENT"],
+    )
+
+    res = verify_causal_grounding([branch_grounded, branch_ungrounded], reg)
+    assert res["total_causes"] == 2
+    assert res["grounded_causes"] == 1
+    assert res["ungrounded_causes"] == 1
+    assert res["grounding_ratio"] == 0.5
+    assert res["compliance_status"] == "GROUNDING_DEFICIENT"
+
+    # Branch flags updated correctly
+    assert branch_grounded.is_unsubstantiated is False
+    assert branch_grounded.assumed_flag is False
+    assert branch_grounded.assumption_flag is False
+
+    assert branch_ungrounded.is_unsubstantiated is True
+    assert branch_ungrounded.assumed_flag is True
+    assert branch_ungrounded.assumption_flag is True
+
+
+def test_verify_causal_grounding_supports_dict_causes():
+    """Verify that verify_causal_grounding safely handles dictionary causes without raising AttributeError."""
+    reg = CitationRegistry()
+    c1 = reg.register_citation(source_doc="doc1.txt", excerpt="Evidence statement")
+
+    dict_grounded = {"citation_ids": [c1.citation_id], "cause": "Bearing failure"}
+    dict_ungrounded = {"citation_ids": [], "cause": "Unknown electrical fault"}
+
+    res = verify_causal_grounding([dict_grounded, dict_ungrounded], reg)
+    assert res["total_causes"] == 2
+    assert res["grounded_causes"] == 1
+    assert res["ungrounded_causes"] == 1
+
+    assert dict_grounded["is_unsubstantiated"] is False
+    assert dict_grounded["assumed_flag"] is False
+    assert dict_grounded["assumption_flag"] is False
+
+    assert dict_ungrounded["is_unsubstantiated"] is True
+    assert dict_ungrounded["assumed_flag"] is True
+    assert dict_ungrounded["assumption_flag"] is True
+

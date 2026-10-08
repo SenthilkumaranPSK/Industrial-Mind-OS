@@ -9,6 +9,7 @@ import Register from './components/Auth/Register';
 import GraphVisualizer from './components/GraphVisualizer';
 import ArtifactPanel from './components/ArtifactPanel';
 import MindMap from './components/MindMap';
+import EightDIncidentStudio from './components/EightDStudio/EightDIncidentStudio';
 import { API_URL } from './api';
 
 export default function App() {
@@ -21,6 +22,8 @@ export default function App() {
   const [showGraph, setShowGraph] = useState(false);
   const [showSourceSelection, setShowSourceSelection] = useState(false);
   const [showMindMap, setShowMindMap] = useState(false);
+  const [showEightDStudio, setShowEightDStudio] = useState(false);
+  const [activeEightDReport, setActiveEightDReport] = useState(null);
   const [activeArtifact, setActiveArtifact] = useState(null);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
   const [activeMessageId, setActiveMessageId] = useState(null);
@@ -83,6 +86,35 @@ export default function App() {
   const handleUpdateChatFiles = (chatId, files) => {
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, selectedFiles: files } : c));
     setShowSourceSelection(false);
+  };
+
+  const handleOpenEightDStudio = async (report = null) => {
+    if (report) {
+      setActiveEightDReport(report);
+      setShowEightDStudio(true);
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/v1/rca/reports`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const summaries = await res.json();
+        if (Array.isArray(summaries) && summaries.length > 0) {
+          const firstId = summaries[0].report_id;
+          const fullRes = await fetch(`${API_URL}/api/v1/rca/reports/${firstId}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          });
+          if (fullRes.ok) {
+            const fullReport = await fullRes.json();
+            setActiveEightDReport(fullReport);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch existing 8D reports, using offline defaults:', err);
+    }
+    setShowEightDStudio(true);
   };
 
   const handleRenameChat = (id, newTitle) => {
@@ -378,6 +410,7 @@ export default function App() {
             onShowGraph={() => setShowGraph(true)} onShowMindMap={() => setShowMindMap(true)} onOpenSourceSelection={() => setShowSourceSelection(true)}
             onClose={() => setIsSidebarOpen(false)}
             alerts={alerts} onDismissAlert={dismissAlert}
+            onShowEightDStudio={() => handleOpenEightDStudio()}
           />
         </div>
       </div>
@@ -399,7 +432,7 @@ export default function App() {
 
         <div className={`transition-all duration-500 bg-white flex flex-col border-l border-slate-200 ${activeArtifact ? 'absolute inset-0 z-40 lg:relative lg:inset-auto lg:w-1/2 w-full' : isRightSidebarOpen ? 'absolute inset-0 z-40 lg:relative lg:inset-auto lg:w-[360px] w-full' : 'w-0 overflow-hidden hidden lg:flex'}`}>
           <div className="h-full w-full relative overflow-hidden flex flex-col">
-            {activeArtifact ? <ArtifactPanel artifact={activeArtifact} onClose={() => setActiveArtifact(null)} /> : (
+            {activeArtifact ? <ArtifactPanel artifact={activeArtifact} onClose={() => setActiveArtifact(null)} onSourceClick={setActiveSource} /> : (
               <div className="h-full flex flex-col bg-slate-50/50">
                 <div className="p-4 border-b border-slate-100 bg-white flex items-center justify-between">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />Retrieval Context</h3>
@@ -416,6 +449,14 @@ export default function App() {
       {showGraph && <GraphVisualizer onClose={() => setShowGraph(false)} />}
       {showMindMap && <MindMap onClose={() => setShowMindMap(false)} chatMessages={messages} />}
       <SourceSelectionModal isOpen={showSourceSelection} onClose={() => setShowSourceSelection(false)} uploadedFiles={uploadedFiles} initialSelection={activeChat?.selectedFiles || []} onConfirm={(files) => handleUpdateChatFiles(currentChatId, files)} />
+      {showEightDStudio && (
+        <EightDIncidentStudio
+          report={activeEightDReport}
+          onClose={() => setShowEightDStudio(false)}
+          onSourceClick={setActiveSource}
+          isModal={true}
+        />
+      )}
     </div>
   );
 }

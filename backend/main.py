@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.router import api_router
 from api.auth import router as auth_router
+from api.rca_router import rca_router
 from db.database import engine, Base
 from db import models  # noqa: F401 - registers models on Base before create_all
 
@@ -48,6 +49,7 @@ app.add_middleware(
 # Include core API routes
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(rca_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

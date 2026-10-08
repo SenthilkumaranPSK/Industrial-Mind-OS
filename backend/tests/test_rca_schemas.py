@@ -767,3 +767,44 @@ def test_all_17_schemas_json_schema_export():
         assert isinstance(schema, dict), f"{model.__name__} failed to produce dict schema"
         assert "properties" in schema, f"{model.__name__} schema missing 'properties'"
         assert "title" in schema, f"{model.__name__} schema missing 'title'"
+
+
+def test_fishbone_branch_assumption_flags_grounded_and_unsubstantiated():
+    """Verify FishboneBranch supports assumed_flag and assumption_flag identically to FiveWhyNode."""
+    # Ungrounded branch with causes but no citations
+    ungrounded = FishboneBranch(
+        category="Machine",
+        causes=["Misaligned impeller shaft caused severe vibration"],
+        citation_ids=[],
+    )
+    assert ungrounded.is_unsubstantiated is True
+    assert ungrounded.assumed_flag is True
+    assert ungrounded.assumption_flag is True
+
+    # Grounded branch with citation
+    grounded = FishboneBranch(
+        category="Machine",
+        causes=["Misaligned impeller shaft caused severe vibration"],
+        citation_ids=["CITE-PUMP-001"],
+    )
+    assert grounded.is_unsubstantiated is False
+    assert grounded.assumed_flag is False
+    assert grounded.assumption_flag is False
+
+    # Grounded via evidence_citation_ids alias
+    grounded_alias = FishboneBranch(
+        category="Method",
+        causes=["Improper lubrication schedule"],
+        evidence_citation_ids=["CITE-MANUAL-002"],
+    )
+    assert grounded_alias.citation_ids == ["CITE-MANUAL-002"]
+    assert grounded_alias.is_unsubstantiated is False
+    assert grounded_alias.assumed_flag is False
+    assert grounded_alias.assumption_flag is False
+
+    # Empty branch (no causes) is not flagged as an unsubstantiated assumption
+    empty_branch = FishboneBranch(category="Man", causes=[], citation_ids=[])
+    assert empty_branch.is_unsubstantiated is False
+    assert empty_branch.assumed_flag is False
+    assert empty_branch.assumption_flag is False
+

@@ -40,11 +40,12 @@ It is composed of two primary tracks operating concurrently:
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Backend Schemas & Timeline Ingestion | Pydantic v2 schemas (`rca_schemas.py`), evidence citation registry, and chronological timeline extractor (`rca_ingestion.py`) with unit tests | none | PLANNED |
-| M2 | Deductive RCA & Preventative Engine | 5-Why tree generator, Ishikawa 6M classifier, assumption flagger, historical near-miss matcher, OEM envelope deviation engine (`rca_engine.py`) with unit tests | M1 | PLANNED |
+| M1 | Backend Schemas & Timeline Ingestion | Pydantic v2 schemas (`rca_schemas.py`), evidence citation registry, and chronological timeline extractor (`rca_ingestion.py`) with unit tests | none | DONE |
+| M2 | Deductive RCA & Preventative Engine | 5-Why tree generator, Ishikawa 6M classifier, assumption flagger, historical near-miss matcher, OEM envelope deviation engine (`rca_engine.py`) with unit tests | M1 | IN_PROGRESS |
 | M3 | RCA API Endpoints & Audit Package Backend | FastAPI router (`rca_router.py`), route mounting in `main.py`, SHA-256 audit package export generator with unit/integration tests | M1, M2 | PLANNED |
 | M4 | Frontend 8D Studio & Interactive Visualizers | Interactive 8D Incident Studio components (`frontend/src/components/EightDStudio/*`), integration in `ArtifactPanel.jsx` & `Sidebar.jsx`, citation modal drill-downs, print CSS | M3 (API contracts) | PLANNED |
 | M5 | Final Milestone: 100% E2E Pass & Hardening | Phase 1: 100% E2E test suite pass across all tiers. Phase 2: Tier 5 adversarial stress testing and verification | M1, M2, M3, M4, E2E Test Track | PLANNED |
+
 
 ---
 

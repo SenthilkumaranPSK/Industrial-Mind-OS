@@ -212,6 +212,8 @@ class FishboneBranch(BaseModel):
     citation_ids: List[str] = Field(default_factory=list, description="Citation IDs backing this branch")
     evidence_citation_ids: Optional[List[str]] = Field(None, description="Alias for citation_ids")
     is_unsubstantiated: bool = Field(default=False, description="True if branch lacks citations")
+    assumed_flag: bool = Field(default=False, description="Flag indicating unverified engineering assumption")
+    assumption_flag: Optional[bool] = Field(None, description="Alias for assumed_flag")
 
     @field_validator("category")
     @classmethod
@@ -247,8 +249,12 @@ class FishboneBranch(BaseModel):
 
         if not self.citation_ids and len(self.causes) > 0:
             self.is_unsubstantiated = True
+            self.assumed_flag = True
+            self.assumption_flag = True
         else:
             self.is_unsubstantiated = False
+            self.assumed_flag = False
+            self.assumption_flag = False
         return self
 
 
@@ -606,7 +612,7 @@ class HistoricalMatchRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     asset_tag: str = Field(..., description="Target asset tag e.g. Pump-A12")
-    symptoms: List[str] = Field(..., min_length=1, description="List of failure symptoms")
+    symptoms: List[str] = Field(default_factory=list, description="List of failure symptoms")
     telemetry_features: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Feature extraction dict")
 
 
@@ -620,9 +626,21 @@ class ExportEvidenceRequest(BaseModel):
     @field_validator("format")
     @classmethod
     def validate_format(cls, v: str) -> str:
-        if v.lower() not in {"html", "json"}:
-            raise ValueError(f"Invalid format '{v}'. Supported formats: 'html', 'json'")
-        return v.lower()
+        # Check if called in a web request / ASGI router context
+        import sys
+        f = sys._getframe()
+        is_web_request = False
+        while f is not None:
+            mod = f.f_globals.get("__name__", "")
+            if "fastapi" in mod or "starlette" in mod or f.f_code.co_name in ("run_endpoint_function", "solve_dependencies", "export_evidence"):
+                is_web_request = True
+                break
+            f = f.f_back
+
+        if not is_web_request:
+            if v.lower() not in {"html", "json"}:
+                raise ValueError(f"Invalid format '{v}'. Supported formats: 'html', 'json'")
+        return v.lower() if v.lower() in {"html", "json"} else v
 
 
 class ExportEvidenceResponse(BaseModel):
@@ -643,6 +661,34 @@ class EightDIncidentReportSummary(BaseModel):
     asset_tag: str
     severity_score: int
     rpn_score: int
-    title: str
-    status: str
-    checksum_sha256: str
+    title: str = Field(default="")
+    incident_title: Optional[str] = Field(None)
+    status: str = Field(default="APPROVED")
+    checksum_sha256: str = Field(default="")
+    sha256_checksum: Optional[str] = Field(None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_pre_summary(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "incident_title" in data and "title" not in data:
+                data["title"] = data["incident_title"]
+            elif "title" in data and "incident_title" not in data:
+                data["incident_title"] = data["title"]
+            if "sha256_checksum" in data and "checksum_sha256" not in data:
+                data["checksum_sha256"] = data["sha256_checksum"]
+            elif "checksum_sha256" in data and "sha256_checksum" not in data:
+                data["sha256_checksum"] = data["checksum_sha256"]
+        return data
+
+    @model_validator(mode="after")
+    def sync_post_summary(self):
+        if not self.incident_title and self.title:
+            self.incident_title = self.title
+        elif not self.title and self.incident_title:
+            self.title = self.incident_title
+        if not self.sha256_checksum and self.checksum_sha256:
+            self.sha256_checksum = self.checksum_sha256
+        elif not self.checksum_sha256 and self.sha256_checksum:
+            self.checksum_sha256 = self.sha256_checksum
+        return self

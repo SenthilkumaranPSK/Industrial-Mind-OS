@@ -436,7 +436,7 @@ class TimelineExtractor:
         params = {k: v for k, v in log.items() if k not in ("timestamp", "equipment_tag", "event_id")}
 
         # Check vibration parameter
-        vib = params.get("vibration_mm_s") or params.get("vibration")
+        vib = params.get("vibration_mm_s") if params.get("vibration_mm_s") is not None else params.get("vibration")
         if vib is not None:
             try:
                 vib_val = float(vib)
@@ -456,8 +456,25 @@ class TimelineExtractor:
             except (ValueError, TypeError):
                 pass
 
-        event_type = log.get("event_type") or self._classify_sentence(log.get("description", ""))
-        desc = log.get("description", f"Telemetry reading on {equipment_tag}")
+        # Check temperature parameter if present
+        temp = params.get("temperature_c") if params.get("temperature_c") is not None else params.get("temperature")
+        if temp is not None:
+            try:
+                params["temperature_c"] = float(temp)
+            except (ValueError, TypeError):
+                pass
+
+        # Check pressure parameter if present
+        press = params.get("pressure_bar") if params.get("pressure_bar") is not None else params.get("pressure")
+        if press is not None:
+            try:
+                params["pressure_bar"] = float(press)
+            except (ValueError, TypeError):
+                pass
+
+        raw_desc = log.get("description")
+        desc = str(raw_desc).strip() if (raw_desc is not None and len(str(raw_desc).strip()) >= 3) else f"Telemetry reading on {equipment_tag}"
+        event_type = log.get("event_type") or self._classify_sentence(desc)
         event_id = log.get("event_id", f"EVT-TEL-{int(dt.timestamp())}")
 
         return TimelineEvent(
@@ -582,9 +599,10 @@ class TimelineExtractor:
 
         return params
 
-    def _classify_sentence(self, sentence: str) -> str:
+    def _classify_sentence(self, sentence: Optional[str]) -> str:
         """Determines event type using rule precedence."""
-        s_lower = sentence.lower()
+        desc = str(sentence or "").strip()
+        s_lower = desc.lower()
 
         # Precedence 1: System Failure
         if any(k in s_lower for k in self.CLASSIFICATION_RULES["SYSTEM_FAILURE"]):
@@ -613,19 +631,23 @@ class TimelineExtractor:
         """Associates citation IDs to timeline events based on word overlap."""
         for event in events:
             matched_cites: List[str] = []
-            desc_words = [w.lower() for w in re.findall(r"\b\w{4,}\b", event.description)]
+            event_desc = str(event.description or "")
+            desc_words = [w.lower() for w in re.findall(r"\b\w{4,}\b", event_desc)]
 
             for c in citations:
                 cite_excerpt_lower = c.excerpt.lower()
                 matches = sum(1 for w in desc_words if w in cite_excerpt_lower)
                 # If vibration matches
-                vib_in_event = "vibration" in event.description.lower()
+                vib_in_event = "vibration" in event_desc.lower()
                 vib_in_cite = "vibration" in cite_excerpt_lower
                 if matches >= 2 or (vib_in_event and vib_in_cite and "5.8" in cite_excerpt_lower):
                     matched_cites.append(c.citation_id)
 
-            if matched_cites:
-                event.citation_ids = list(dict.fromkeys(matched_cites))
+            existing_cites = list(event.citation_ids or [])
+            combined_cites = list(dict.fromkeys(existing_cites + matched_cites))
+            event.citation_ids = combined_cites
+
+            if combined_cites:
                 event.is_unsubstantiated = False
             else:
                 event.is_unsubstantiated = True
@@ -679,21 +701,42 @@ def verify_causal_grounding(
 
     for cause in causes:
         # Retrieve citation IDs from cause
-        cids = getattr(cause, "citation_ids", None)
-        if cids is None:
-            cids = getattr(cause, "evidence_citation_ids", [])
+        if isinstance(cause, dict):
+            cids = cause.get("citation_ids")
+            if cids is None:
+                cids = cause.get("evidence_citation_ids", [])
+        else:
+            cids = getattr(cause, "citation_ids", None)
+            if cids is None:
+                cids = getattr(cause, "evidence_citation_ids", [])
         if not isinstance(cids, list):
             cids = [cids] if cids else []
 
         valid_ids, _ = registry.validate_citation_ids(cids)
-        if not valid_ids:
-            setattr(cause, "is_unsubstantiated", True)
-            setattr(cause, "assumed_flag", True)
-            setattr(cause, "assumption_flag", True)
+        ungrounded = not bool(valid_ids)
+
+        if isinstance(cause, dict):
+            cause["is_unsubstantiated"] = ungrounded
+            cause["assumed_flag"] = ungrounded
+            cause["assumption_flag"] = ungrounded
         else:
-            setattr(cause, "is_unsubstantiated", False)
-            setattr(cause, "assumed_flag", False)
-            setattr(cause, "assumption_flag", False)
+            if hasattr(cause, "is_unsubstantiated"):
+                try:
+                    cause.is_unsubstantiated = ungrounded
+                except Exception:
+                    pass
+            if hasattr(cause, "assumed_flag"):
+                try:
+                    cause.assumed_flag = ungrounded
+                except Exception:
+                    pass
+            if hasattr(cause, "assumption_flag"):
+                try:
+                    cause.assumption_flag = ungrounded
+                except Exception:
+                    pass
+
+        if not ungrounded:
             grounded += 1
 
     ratio = round(grounded / total, 4) if total > 0 else 0.0

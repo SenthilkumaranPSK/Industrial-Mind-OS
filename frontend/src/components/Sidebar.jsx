@@ -3,7 +3,8 @@ import {
   Target, CheckCircle, FileText, UploadCloud, Link as LinkIcon,
   LogOut, X, User as UserIcon, ShieldCheck, PanelLeftClose,
   Trash2, Plus, MoreHorizontal, Edit2, Share, Archive, Check,
-  Share2, Filter, GitBranch, Clock, ChevronDown, ChevronUp, Bell, AlertTriangle
+  Share2, Filter, GitBranch, Clock, ChevronDown, ChevronUp, Bell, AlertTriangle,
+  ShieldAlert
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -11,7 +12,8 @@ export default function Sidebar({
   onLogout, onUpload, onConfluenceSync, onDeleteFile, isUploading,
   uploadedFiles, chats, currentChatId, onSelectChat, onNewChat,
   onRenameChat, onDeleteChat, onClose, onShowGraph, onShowMindMap,
-  onOpenSourceSelection, alerts = [], onDismissAlert
+  onOpenSourceSelection, alerts = [], onDismissAlert,
+  onShowEightDStudio
 }) {
   const fileInputRef = useRef(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -199,6 +201,21 @@ export default function Sidebar({
               <div className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse flex-shrink-0" />
             </button>
           </div>
+
+          <button
+            onClick={onShowEightDStudio}
+            className="w-full flex items-center justify-between py-2 px-2.5 rounded-lg text-xs font-bold bg-slate-800/80 hover:bg-rose-950/40 text-rose-300 border border-rose-500/20 hover:border-rose-500/40 transition-all group"
+            title="Open 8D Incident Studio (Root Cause Analysis & ISO 9001 Compliance)"
+          >
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400 group-hover:scale-110 transition-transform flex-shrink-0" />
+              <span className="truncate">8D Incident Studio</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded font-mono font-bold">RCA</span>
+              <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse flex-shrink-0" />
+            </div>
+          </button>
         </div>
 
         {/* Files collapsible */}

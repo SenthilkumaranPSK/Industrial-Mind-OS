@@ -1,8 +1,37 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Copy, ExternalLink, Code2, Globe, Table2, ChevronRight } from 'lucide-react';
+import { X, Copy, ExternalLink, Code2, Globe, Table2, ChevronRight, ShieldAlert } from 'lucide-react';
+import EightDIncidentStudio from './EightDStudio/EightDIncidentStudio';
+
+function parse8DReport(artifact) {
+  if (!artifact) return null;
+  if (artifact.type === '8d_report' || artifact.type === 'rca') {
+    if (artifact.report && typeof artifact.report === 'object') return artifact.report;
+    if (artifact.data && typeof artifact.data === 'object') return artifact.data;
+  }
+  if (artifact.data && typeof artifact.data === 'object' && (artifact.data.d1_team || artifact.data.report_id)) {
+    return artifact.data;
+  }
+  if (artifact.report && typeof artifact.report === 'object') {
+    return artifact.report;
+  }
+  if (typeof artifact.content === 'string') {
+    const trimmed = artifact.content.trim();
+    if (trimmed.startsWith('{') && (trimmed.includes('d1_team') || trimmed.includes('d2_problem') || trimmed.includes('report_id'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.d1_team || parsed.d2_problem || parsed.report_id) {
+          return parsed;
+        }
+      } catch {
+        // Not valid JSON
+      }
+    }
+  }
+  return null;
+}
 
 function detectArtifactType(content) {
-  const trimmed = content.trim();
+  const trimmed = typeof content === 'string' ? content.trim() : '';
   if (/^\s*<(html|!DOCTYPE|div|section|main|article)/i.test(trimmed)) return 'html';
   if (/^\s*```(\w+)?/.test(trimmed) || /^(import |from |def |class |function |const |let |var |#include|package )/.test(trimmed)) return 'code';
   if (/^\|.+\|/.test(trimmed) || trimmed.includes('\n|')) return 'table';
@@ -202,7 +231,7 @@ function TableView({ content }) {
   );
 }
 
-export default function ArtifactPanel({ artifact, onClose }) {
+export default function ArtifactPanel({ artifact, onClose, onSourceClick }) {
   const [isVisible, setIsVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('preview');
 
@@ -216,27 +245,44 @@ export default function ArtifactPanel({ artifact, onClose }) {
 
   if (!artifact) return null;
 
-  const type = detectArtifactType(artifact.content);
+  const eightDReport = parse8DReport(artifact);
+  const is8D = Boolean(eightDReport);
+
+  const type = is8D ? '8d_report' : detectArtifactType(artifact.content);
   const isHtml = type === 'html';
   const isTable = type === 'table';
   const isCode = type === 'code';
 
-  const TypeIcon = isHtml ? Globe : isTable ? Table2 : Code2;
-  const typeLabel = isHtml ? 'Designer UI' : isTable ? 'Data View' : 'Code';
-  const typeBadgeColor = isHtml ? 'bg-emerald-100 text-emerald-700' : isTable ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-700';
+  const TypeIcon = is8D ? ShieldAlert : isHtml ? Globe : isTable ? Table2 : Code2;
+  const typeLabel = is8D ? '8D Incident Studio' : isHtml ? 'Designer UI' : isTable ? 'Data View' : 'Code';
+  const typeBadgeColor = is8D
+    ? 'bg-rose-100 text-rose-700'
+    : isHtml
+    ? 'bg-emerald-100 text-emerald-700'
+    : isTable
+    ? 'bg-violet-100 text-violet-700'
+    : 'bg-slate-100 text-slate-700';
 
   // Determine available tabs
   const tabs = [];
-  if (isHtml) tabs.push('preview', 'code');
-  else if (isTable) tabs.push('preview', 'table', 'code');
-  else tabs.push('code');
+  if (is8D) {
+    tabs.push('studio');
+    if (typeof artifact.content === 'string' && artifact.content.trim()) tabs.push('code');
+  } else if (isHtml) {
+    tabs.push('preview', 'code');
+  } else if (isTable) {
+    tabs.push('preview', 'table', 'code');
+  } else {
+    tabs.push('code');
+  }
 
   // Default tab fallback
   useEffect(() => {
-    if (isHtml) setActiveTab('preview');
+    if (is8D) setActiveTab('studio');
+    else if (isHtml) setActiveTab('preview');
     else if (isTable) setActiveTab('preview');
     else setActiveTab('code');
-  }, [artifact, isHtml, isTable]);
+  }, [artifact, is8D, isHtml, isTable]);
 
   return (
     <div className="w-full h-full flex flex-col bg-white border-l border-slate-200">
@@ -247,7 +293,7 @@ export default function ArtifactPanel({ artifact, onClose }) {
             <TypeIcon className="w-4.5 h-4.5 text-indigo-600" size={18} />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-bold text-slate-900 truncate">{artifact.title}</h3>
+            <h3 className="text-sm font-bold text-slate-900 truncate">{artifact.title || (is8D ? '8D Incident Report' : 'Artifact')}</h3>
             <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${typeBadgeColor}`}>
               {typeLabel}
             </span>
@@ -268,7 +314,7 @@ export default function ArtifactPanel({ artifact, onClose }) {
                   activeTab === tab ? 'text-indigo-600 font-bold' : 'text-slate-400 hover:text-slate-600'
                 }`}
               >
-                {tab === 'preview' ? '🌐 Preview' : tab === 'code' ? '</> Code' : '📋 Table'}
+                {tab === 'studio' ? '🛡️ 8D Studio' : tab === 'preview' ? '🌐 Preview' : tab === 'code' ? '</> Code' : '📋 Table'}
                 {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600" />}
               </button>
             ))}
@@ -277,9 +323,25 @@ export default function ArtifactPanel({ artifact, onClose }) {
 
         {/* Content Area */}
         <div className="flex-1 overflow-hidden relative">
+          {activeTab === 'studio' && is8D && (
+            <EightDIncidentStudio
+              report={eightDReport}
+              onSourceClick={onSourceClick}
+              onClose={onClose}
+              isModal={false}
+            />
+          )}
           {activeTab === 'preview' && isHtml && <HtmlView content={artifact.content} title={artifact.title} />}
           {activeTab === 'preview' && isTable && <TableView content={artifact.content} />}
-          {activeTab === 'code' && <CodeView content={artifact.content} />}
+          {activeTab === 'code' && (
+            <CodeView
+              content={
+                typeof artifact.content === 'string'
+                  ? artifact.content
+                  : JSON.stringify(artifact.content || eightDReport, null, 2)
+              }
+            />
+          )}
           {activeTab === 'table' && isTable && <TableView content={artifact.content} />}
         </div>
       </div>
